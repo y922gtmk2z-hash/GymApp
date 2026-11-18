@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Gym</title>
+  <meta name="description" content="Offline workout planner, logger and progress tracker.">
+  <meta name="theme-color" content="#0f1115" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#0f1115">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Gym">
+  <meta name="format-detection" content="telephone=no">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+  <script>
+    // Apply theme before first paint to avoid a flash.
+    try {
+      var t = (JSON.parse(localStorage.getItem('gym-theme') || '"dark"'));
+      document.documentElement.dataset.theme = t;
+    } catch (e) {}
+  </script>
+</head>
+<body>
+  <a class="skip" href="#view">Skip to content</a>
+  <header class="topbar">
+    <h1 id="title">Gym</h1>
+    <div id="topbar-actions"></div>
+  </header>
+  <main id="view" tabindex="-1"></main>
+  <nav class="tabbar" aria-label="Main">
+    <a href="#/today" data-tab="today"><span class="ti" aria-hidden="true">◉</span><span>Today</span></a>
+    <a href="#/plan" data-tab="plan"><span class="ti" aria-hidden="true">▦</span><span>Plan</span></a>
+    <a href="#/progress" data-tab="progress"><span class="ti" aria-hidden="true">↗</span><span>Progress</span></a>
+    <a href="#/more" data-tab="more"><span class="ti" aria-hidden="true">≡</span><span>More</span></a>
+  </nav>
+  <div id="overlay" hidden></div>
+  <div id="sheets"></div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <noscript><p class="pad">This app needs JavaScript.</p></noscript>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
