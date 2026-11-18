@@ -1,6 +1,8 @@
 # Gym PWA: Implementation Plan
 
-Companion to the project brief. It turns the brief into a file layout, module contracts, exact rules for the parts the brief leaves open, and a task list per phase. Each phase ends with a commit and leaves the app runnable.
+Companion to the project brief (`BRIEF.md`). It turns the brief into a file layout, module contracts, exact rules for the parts the brief leaves open, and a task list per phase. Each phase ends with a commit and leaves the app runnable.
+
+**Revision 2:** adds the exercise-only weight-loss phase (brief 4.10). The changes are in section 0 (new decisions), 1 (`weight.js`), 2 (data model), **3b (weight-loss rules)**, 4 (cardio activities), 6 (UI), 7 (phase tasks) and 8 (acceptance).
 
 ---
 
@@ -28,6 +30,12 @@ These are the defaults I will build unless you say otherwise. Each one is a sing
 | Routing | Hash routes (`#/today`, `#/plan`, `#/progress`, `#/more`, `#/workout`) so it works under any GitHub Pages sub-path with no server config. |
 | IDs | `crypto.randomUUID()` with a small fallback. Plan session IDs are deterministic (see 3.9) so calendar UIDs are stable. |
 | Tests | Node's built-in `node:test` and `node:assert`. Run with `node --test tests/`. No `package.json` needed (one may exist only to name the test script, with zero dependencies). |
+| Weight-loss pace | Pace % is applied to the **start** weight, so the target pace in kg/week is fixed for the whole phase and the goal line is straight. "Too fast" means over 1 % per week, "ambitious" 0.75-1 %, "ok" up to 0.75 %. |
+| Weight trend | Least-squares slope of `weightKg` against day number over the last 21 days, times 7, gives kg/week. Needs 4 or more weigh-ins in the last 14 days, otherwise `null`. Pace % = −slope / current 7-day average x 100 (positive means losing). |
+| Cardio minutes | Counted 1:1 whatever the intensity (no "vigorous counts double" weighting), so the planned and logged numbers are easy to compare. Finishers count. |
+| Steps | Entered once a week as the daily average for the past 7 days (Apple Health shows this directly). Not logged daily. |
+| Weekly review | Runs for the week just ended once a check-in exists in the current week, or from Monday onward on opening Today. One suggestion per week, stored in `weightGoal.reviews`. "Two in a row" means the last two stored reviews. |
+| No calories anywhere | No kcal field, estimate or label in the UI, data model or exports. A test checks that the UI strings contain no calorie terms. |
 | Rendering | Plain DOM. A tiny `h(tag, attrs, ...children)` helper and one `render()` per view, re-run on state change. No virtual DOM, no framework. |
 
 ---
@@ -50,8 +58,9 @@ js/
   store.js               in-memory state, subscribe(), commit(mutator), debounced persist
   db.js                  IndexedDB adapter + localStorage fallback, persist() request
   schema.js              defaults, version, migrations[], validate()  (pure, Node-tested)
-  data.js                exercise library, muscles, equipment tags, default profiles (pure)
+  data.js                exercise library, cardio activities, muscles, equipment tags, default profiles (pure)
   engine.js              plan + progression + deload rules (pure, DOM-free, Node-tested)
+  weight.js              weight-loss rules: feasibility, cardio/steps plan, trend, weekly review (pure, Node-tested)
   stats.js               e1RM series, PRs, weekly volume, summaries, rolling avg (pure, Node-tested)
   ics.js                 .ics generation (pure, Node-tested)
   charts.js              SVG line chart -> string (pure geometry, Node-tested)
@@ -69,6 +78,7 @@ js/
     more.js              library, profiles, settings, backup
 tests/
   engine.test.js
+  weight.test.js
   stats.test.js
   ics.test.js
   schema.test.js
@@ -92,7 +102,7 @@ The brief lists the modules at the root. I've put them under `js/` to keep the r
 ```js
 state = {
   version: 1,
-  user: { id, name: "" },
+  user: { id, name: "", heightCm: null, birthYear: null },
   settings: {
     units: "kg",                 // "kg" | "lb" (display only; storage is kg)
     theme: "dark",               // "dark" | "light" | "auto"
@@ -100,10 +110,12 @@ state = {
     restOverrides: { [exId]: sec },                    // remembered per exercise
     alarmMinutes: 30,
     weekStartsOn: 1,
+    stepCap: 10000,
   },
   profiles: [ { id: "gym", name: "Gym", equipment: [...all] },
               { id: "home", name: "Home", equipment: ["dumbbell","bench","bodyweight","pullup_bar"] } ],
   customExercises: [ /* same shape as library entries, id prefixed "c_" */ ],
+  customActivities: [ /* same shape as cardio activities, id prefixed "c_" */ ],
   builder: {                     // last builder inputs, pre-filled next week
     goal: "muscle",              // "muscle" | "strength" | "general"
     focus: { chest: "maintain", ... },   // all 10 muscles
@@ -115,7 +127,11 @@ state = {
       days: [ { date, profileId, minutes, startTime } ],
       sessions: [ { id, date, name, splitKey, profileId, minutes, startTime,
                     skipped: false,
-                    exercises: [ { exId, sets, repMin, repMax, restSec } ] } ],
+                    kind: "lift",          // "lift" | "cardio"
+                    exercises: [ { exId, sets, repMin, repMax, restSec } ],
+                    cardio: [ { activityId, minutes, intensity: "steady"|"intervals", finisher } ] } ],
+      cardioTargetMin: 0,        // 0 when no weight-loss phase
+      stepTarget: null,
       warnings: [ "No hamstring exercise available in Home" ],
       icsSequence: 0,
     }
@@ -123,12 +139,24 @@ state = {
   workouts: [ { id, date, startedAt, endedAt, durationSec, sessionId?, name, note,
                 exercises: [ { exId, note, restSec,
                                sets: [ { kg, reps, done, warmup } ] } ],
+                cardio: [ { activityId, minutes, distanceKm, avgHr, intensity, finisher } ],
                 prs: [ { exId, type: "e1rm"|"weight"|"reps", value, kg?, reps? } ] } ],
   activeWorkout: null,           // the in-progress workout, persisted on every change
   timer: null,                   // { endAt, durationSec, exId } while resting
   metrics: [ { id, date, weightKg, restingHr, waistCm, hrvMs, vo2max, sleepHrs,
-               bodyFatPct, chestCm, armCm, thighCm, hipCm } ],
-  targets: { "metric:weightKg": 80, "lift:bench_bb:e1rm": 100 },
+               bodyFatPct, stepsAvg, chestCm, armCm, thighCm, hipCm } ],
+  targets: { "metric:weightKg": 80, "metric:waistCm": 84, "lift:bench_bb:e1rm": 100 },
+  weightGoal: null | {           // the weight-loss phase; null when off
+    active: true, startDate, startKg, targetKg, targetDate, pacePct,
+    baselineSteps, baselineCardioMin,
+    levels: { cardioMin: 60, steps: 7000 },     // current prescription
+    rampDone: false,                             // true once cardioMin reaches 150
+    lastLever: null,                             // "steps" | "cardio", for alternating step-ups
+    cardioDays: [ { weekday, minutes, profileId, startTime } ],
+    finishers: true,
+    reviews: [ { weekStart, pacePct, kind, changes, accepted: null|true|false } ],
+    endedAt: null,
+  },
   dismissed: { deloadSuggestion: "2026-11-16", backupReminder: "2026-11-01" },
   lastExportAt: null,
   lastDeloadWeek: null,
@@ -153,6 +181,9 @@ Changes from the sketch, and why:
 | sleepHrs | hours, 1 dp | Sleep (time asleep, nightly average) |
 | bodyFatPct | % | Body Fat Percentage |
 | waistCm | cm | Waist Circumference |
+| stepsAvg | count/day | Steps (weekly view, daily average) |
+| heightCm | cm | Height |
+| cardio entry: minutes, distanceKm, avgHr | min, km, bpm | Workout summary on the Watch / Fitness app |
 | chestCm, armCm, thighCm, hipCm | cm | Not in Health. App only, labelled as such. |
 
 The UI uses the Health names as labels, so copying a number across by hand is obvious.
@@ -209,8 +240,9 @@ Sort order: compounds, then isolations, then core, then calves. The sort is stab
 1. Sort the days, pick the split, then make one session per day: `name` ("Upper A"), `splitKey`, profile, minutes, start time.
 2. Allocate volume, pick exercises per muscle per session, fit the time budget, order the session.
 3. If `previousPlan` exists, for each session with the same `splitKey` and an exercise for the same muscle that is still available in the profile, keep last week's choice. This preserves swaps the user made.
-4. If `deload` is set, apply `applyDeload(plan)`.
-5. Return `{ ...plan, warnings, deficits }`.
+4. If `deload` is set, apply `applyDeload(plan)`. A deload week also cuts cardio minutes to 60 % of the level, but steps stay the same.
+5. If `weightGoal.active`, call `weight.allocateCardio` before step 2's time-budget fit (finishers reduce the lifting budget). Then add the cardio sessions and set `cardioTargetMin` and `stepTarget`.
+6. Return `{ ...plan, warnings, deficits }`.
 
 ### 3.9 Stable session IDs
 `id = "s-" + weekStart + "-" + splitKey`. Moving a session to another day keeps its ID. The ICS UID is derived from the ID, so re-exporting updates the event instead of duplicating it.
@@ -247,6 +279,63 @@ Storage is always kg. Values entered in lb are converted with `lb x 0.45359237` 
 
 ---
 
+## 3b. Weight-loss rules (`weight.js`)
+
+Same rules as `engine.js`: pure, DOM-free, `today` passed in, every rule tested. `engine.buildWeek` calls into it when `weightGoal.active` is set.
+
+### 3b.1 `checkTarget({ startKg, targetKg, targetDate?, pacePct?, heightCm? }, today)`
+- `kgPerWeek = (startKg − targetKg) / weeks`, where `weeks = days(today → targetDate) / 7`. `pacePct = kgPerWeek / startKg x 100`.
+- If only a pace is given: `targetDate = today + ceil((startKg − targetKg) / (startKg x pace/100)) weeks`.
+- Returns `{ status: "ok"|"ambitious"|"too_fast"|"invalid", pacePct, kgPerWeek, targetDate, suggestedDate?, bmiWarning? }`.
+  - `invalid` if the target is not below the start weight, or the date is less than 2 weeks away.
+  - `too_fast` (over 1 %) includes `suggestedDate` at 0.5 %.
+  - `bmiWarning` if height is set and `targetKg / heightM² < 18.5`.
+- Worked example (acceptance): 85 → 78 kg in 8 weeks = 0.875 kg/wk = 1.03 %, so `too_fast`, suggesting 7 / 0.425 = 16.5, rounded up to 17 weeks.
+
+### 3b.2 `weeklyLevels(goal, weekIndex)`
+- Starting point: `cardioMin = max(60, baselineCardioMin)`, `steps = min(stepCap, baselineSteps + 1000)`.
+- Ramp: while `rampDone` is false, each new week adds +15 min until 150, then sets `rampDone`. A baseline already at 150 or more starts with `rampDone` true.
+- After the ramp, only accepted review changes move the levels. Caps: cardio 300 min, steps `stepCap`. Floors: cardio 60 min, steps the baseline.
+
+### 3b.3 `allocateCardio({ cardioMin, liftSessions, cardioDays, profiles, activities, weekIndex, finishers })`
+1. Finishers (if on): each lifting session gets `f = clamp(round(minutes x 0.2), 10, 15)` minutes, steady, low-impact. The session's lifting budget becomes `minutes − f`, and `fitTimeBudget` runs on that. Finishers stop once their sum reaches `cardioMin`.
+2. The remaining minutes are spread evenly across the cardio days (remainder to the earliest), clamped to `[20, day.minutes]`. Days that would get under 20 are dropped and their minutes spread over the others. Anything that still doesn't fit becomes a `cardioDeficit` warning ("Add a cardio day or lengthen one: 25 min short").
+3. Intervals: from `weekIndex ≥ 3` (week 4), at most one standalone session becomes `intervals` (20 min of work inside it). It can't be on a day before a Lower, Legs or Full lifting day. If no day qualifies, there are none that week.
+4. Activity choice: filter the activities by the day's profile, keep those that suit the intensity, take low impact first in library order, and rotate by session index so consecutive sessions differ.
+5. Returns cardio sessions (`kind: "cardio"`, stable IDs `"c-" + weekStart + "-" + weekday`), finisher entries for the lifting sessions, `planned` total and warnings.
+6. If no cardio days are chosen and finishers are off, the whole target is a deficit and the builder says so.
+
+### 3b.4 `zone2(birthYear, restingHr, today)`
+`HRmax = 208 − 0.7 x age`. Returns `[round(rhr + 0.6 x (HRmax − rhr)), round(rhr + 0.7 x (HRmax − rhr))]`, or `null` if either input is missing (the UI then shows "conversational pace, RPE 3-4").
+
+### 3b.5 Trend and projection
+- `weightTrend(metrics, today)` returns `{ kgPerWeek, pacePct, avg7, n14 }`, or `{ reason: "need_data" }`.
+- `projectDate(trend, avg7, targetKg, today)` gives the date at the current slope, or `null` if not losing.
+- `goalLine(goal)` gives the two points (start, target date) for the chart.
+- `progressPct = (startKg − avg7) / (startKg − targetKg)`, clamped to 0-100.
+
+### 3b.6 `weeklyReview(state, weekStart)`
+Checks run in this order, and the first match wins:
+
+| # | Kind | Condition | Proposed change |
+|---|---|---|---|
+| 1 | `goal_reached` | `avg7 ≤ targetKg` | End the phase, keep the levels as maintenance |
+| 2 | `need_data` | trend is null | none (prompt: weigh in 3+ times a week) |
+| 3 | `adherence` | logged cardio < 80 % of planned, or `stepsAvg` < 90 % of target, last week | none (prompt: do the current plan first) |
+| 4 | `strength_warning` | ≥ 3 lifts with e1RM down ≥ 5 % vs 4 weeks ago | cardio −30 min (floor 60) |
+| 5 | `ease_off` | this and the previous review both had pace > 1 % | cardio −30 min (floor 60) |
+| 6 | `recomp` | pace < 50 % of target, but waist down ≥ 1 cm over 28 days | none (counts as progress) |
+| 7 | `step_up` | this and the previous review both had pace < 50 % of target (or gaining) | the lever after `lastLever`: steps +1000, or cardio +30 min. Skip a capped lever. |
+| 8 | `levers_maxed` | the `step_up` case, but both levers are capped | Offer `targetDate` = the projected date at the current trend (if losing). Message: exercise alone has limits, diet is outside this app. |
+| 9 | `on_track` | otherwise | none |
+
+- During the ramp (`rampDone` false), `step_up` is held back: the automatic ramp is already increasing.
+- Accepting a review applies its `changes` to `levels` (and `lastLever`). Dismissing it records `accepted: false` and nothing changes.
+- The review is stored whether it is accepted or not, so "two in a row" is about measured weeks, not clicks.
+- Messages are short, neutral and non-judgemental, and never mention calories.
+
+---
+
 ## 4. Exercise library (`data.js`)
 
 Shape: `{ id, name, primary, secondary[], equip[[...]], type: "compound"|"isolation", pattern, alternatives[] }`.
@@ -269,6 +358,25 @@ Draft list (88), in preference order within each muscle:
 Integrity tests (`data.test.js`): unique IDs, valid muscles, tags and patterns, alternatives resolve to real IDs with the same primary, at least one compound per muscle in the Gym profile, and **at least 2 options per muscle in the default Home profile** (so acceptance test 2 never hits an empty muscle).
 
 Custom exercises use the same shape, with `id = "c_" + slug`. They are merged after the built-ins, so they sit last in preference unless the user picks them.
+
+**Cardio activities (12)** are a separate list: `{ id, name, equip[[...]], impact: "low"|"high", intensities: ["steady","intervals"] }`. In preference order (low impact first):
+
+| Activity | Equipment | Impact | Intensities |
+|---|---|---|---|
+| Brisk walk | outdoors | low | steady |
+| Incline treadmill walk | treadmill | low | steady, intervals |
+| Bike | bike | low | steady, intervals |
+| Rower | rower | low | steady, intervals |
+| Elliptical | elliptical | low | steady, intervals |
+| Hike | outdoors | low | steady |
+| Swim | (none, tagged `pool`, off by default) | low | steady |
+| Stair climber | stair_machine | low | steady |
+| Kettlebell circuit | kettlebell | high | intervals |
+| Bodyweight circuit | bodyweight | high | intervals |
+| Jump rope | jump_rope | high | steady, intervals |
+| Run | outdoors or treadmill | high | steady, intervals |
+
+New equipment tags: `treadmill, bike, rower, elliptical, stair_machine, jump_rope, outdoors, pool`. Gym gets everything except `outdoors` and `pool` (both can be ticked). Home gets `outdoors`. Integrity test: the default Home profile has at least one steady activity and at least one interval activity.
 
 ---
 
@@ -318,6 +426,20 @@ Local testing: `python3 -m http.server` from the repo root, then open `/` and al
 
 **More:** exercise library (search, muscle and equipment filters, add/edit custom), equipment profiles (toggle tags, add/rename/delete, with Gym and Home not deletable), settings (units, theme, rest defaults, alarm minutes, name), and backup (export JSON, import JSON with a validation report and confirm, last export date, storage persisted status).
 
+**Weight loss (additions to the views above):**
+- **Plan > builder:** a "Weight-loss phase" section.
+  - Off by default.
+  - When on: target weight, then target date or a pace selector (0.25 / 0.5 / 0.75 %), baseline steps and current cardio minutes a week.
+  - The feasibility result shows inline ("0.5 %/wk, about 0.43 kg a week, target date 15 Mar"). A too-fast pace has a one-tap "Use 17 Mar instead".
+  - Cardio day cards (weekday, length, profile, start time) and a finishers toggle.
+  - Start weight comes from the current 7-day average. If there are no weigh-ins, the first check-in is asked for inline.
+- **Plan > week:** cardio session cards (activity, minutes, steady/intervals, Zone 2 bpm when known), finisher lines on lifting cards, "Steps: 8,000/day" on the week header, and a cardio minutes bar next to the muscle bars. Cardio cards can swap activity, change minutes, move or skip, and the minutes bar updates.
+- **Today:** a step target chip and a "cardio this week 85 / 120 min" bar. Today's cardio session gets a Start button. A "Log cardio" quick action. The weekly review card (what was measured, the suggestion, Accept / Not now).
+- **Workout overlay:** a cardio card type with activity, minutes (with an optional elapsed timer), distance, average HR and intensity. A lifting session's finisher appears as the last card.
+- **Progress > Body:** the Weight goal card at the top when a phase is active (start, now, target, progress bar, pace vs target, projected date, "Edit goal / End phase"). The weight chart adds the goal line and target line. Plus a waist chart, a weekly cardio minutes vs target chart and a steps vs target chart.
+- **Check-in:** adds "Daily steps (7-day avg)" and highlights waist while a phase is on. After 3 days without a weigh-in during a phase, a gentle nudge on Today.
+- **More > Settings:** height, birth year, step cap. Custom cardio activities in the library.
+
 **Charts (`charts.js`):** `lineChart({ series:[{points:[{x,y}], style}], target?, width, height, range })` returns an SVG string with viewBox scaling, nice axis ticks, raw points as dots, and the 7-day rolling average as a line. Geometry (scales, ticks, path `d`) is pure and tested. Tap a point to show its value in a caption, with no hover needed.
 
 ---
@@ -356,7 +478,14 @@ Each phase lists tasks, the commit, and its done-when checks. Every phase keeps 
    - progression: increase, +1 rep, repeat, increments per equipment and unit, no history gives null, warm-ups ignored
    - stall: 2 bad sessions trigger it, 1 doesn't, a good session in between resets it
    - deload: the 6-week trigger, the stall trigger, 60% sets and 0.9 weights, suggestion after a dismissal
-4. More > Library view (read-only browse, search and filters) so the phase has something visible.
+4. Cardio activities in `data.js`. `weight.js` (section 3b) and its hook in `buildWeek`. `tests/weight.test.js`, covering:
+   - feasibility: ok, ambitious and too-fast bands; the 85 → 78 kg in 8 weeks example; pace-only input; invalid targets; the BMI warning
+   - levels: the starting point, ramp +15 to 150, caps and floors, step cap
+   - cardio allocation: finishers reduce the lifting budget and lifting still fits, even spread, the 20-min minimum, deficit warnings, profile filtering, at most one interval session and never the day before a lower or full day, week-4 gating, rotation, deload at 60 %
+   - trend: slope maths on synthetic data, `need_data` with under 4 weigh-ins, projection and progress %
+   - weekly review: each of the 9 outcomes, the order they are checked in, "two in a row", alternating levers, a capped lever being skipped, ramp holding back step-up, accept vs dismiss
+   - Zone 2 maths and the missing-input fallback
+5. More > Library view (read-only browse, search and filters, exercises and activities) so the phase has something visible.
 
 **Done when:** `node --test tests/` is green and the library is browsable.
 
@@ -368,8 +497,9 @@ Each phase lists tasks, the commit, and its done-when checks. Every phase keeps 
 5. `ics.js`: `VCALENDAR` with `VERSION:2.0`, `PRODID`, `CALSCALE:GREGORIAN`, `METHOD:PUBLISH`. One `VEVENT` per non-skipped session with `UID:<sessionId>@gym-pwa`, `DTSTAMP` (UTC), floating `DTSTART`/`DTEND` (no `Z`, no `TZID`), `SUMMARY`, `DESCRIPTION` (exercise list with `\n`), `SEQUENCE`, and a `VALARM` (`ACTION:DISPLAY`, `TRIGGER:-PT30M`). CRLF line endings, text escaping (`\\ ; , \n`), line folding at 75 octets (UTF-8 safe).
 6. `tests/ics.test.js`: structure, escaping, folding (including multibyte characters), stable UIDs across exports, alarm minutes, floating times.
 7. Today view shows today's planned session.
+8. Weight-loss builder section, feasibility display, cardio cards and finishers in the week, the cardio minutes bar, the step target. Cardio sessions in the `.ics` export (description: activity, minutes, Zone 2 range).
 
-**Done when:** acceptance scenario 2 works in the UI. **You check:** export on iPhone, open in Calendar, alerts appear, export again and confirm no duplicates (results decide the fallback in section 5).
+**Done when:** acceptance scenario 2 works in the UI, and so does the R2 scenario: phase on, 3 lifting days + 2 cardio days, finishers fit, cardio meets the target, equipment matches each profile. **You check:** export on iPhone, open in Calendar, alerts appear, export again and confirm no duplicates (results decide the fallback in section 5).
 
 ### Phase 4: Logger and rest timer
 1. Workout overlay. Start from a planned session (pre-filled from `suggestNext`) or ad hoc. `activeWorkout` is persisted on every edit and resumed after a reload.
@@ -379,6 +509,7 @@ Each phase lists tasks, the commit, and its done-when checks. Every phase keeps 
 5. `stats.js`: `epley`, `detectPRs(workout, priorWorkouts)` (e1RM, heaviest weight, most reps at a weight ≥ the previous best at that weight), done on finish.
 6. Finish: duration, save, PR summary. History list in Progress > Lifts, or a "Workouts" list in More, with edit (reopens the logger on a saved workout) and delete (recomputes PRs).
 7. Tests for `stats.js` (Epley, PR detection, warm-up exclusion, recomputation after a delete) and for the timer's pure maths (`remaining(endAt, now)`, adjust and clamp).
+8. Cardio logging: the cardio card, finisher cards, starting a planned cardio session, and quick-log of a past cardio entry (date picker). `stats.cardioMinutesByWeek` with tests.
 
 **Done when:** a scripted run (Chromium) can log a session, tick a set to start the timer, fake the clock forward to see "Rest over", finish, and see the suggestion increase next time after top-of-range reps (acceptance 4). **You check:** lock the phone for 60 s mid-rest, unlock, and confirm the countdown is correct or "Rest over" shows (acceptance 3).
 
@@ -390,6 +521,7 @@ Each phase lists tasks, the commit, and its done-when checks. Every phase keeps 
 5. Targets: set or clear per metric or lift, with a progress bar (from the first value in range to the target).
 6. Today weekly summary: done vs planned, PRs this week, change vs last week (weight uses 7-day averages).
 7. Tests: rolling average, range filtering, weekly aggregation (Monday weeks across a year boundary), chart tick and path geometry.
+8. Weight goal card, goal and target lines on the weight chart, waist chart, cardio minutes and steps charts, steps field in the check-in, weigh-in nudge. The sample data includes a 12-week weight-loss phase.
 
 **Done when:** seeded demo data (a dev-only "Load sample data" button in Settings, behind a confirm) renders every chart correctly at phone width.
 
@@ -399,8 +531,9 @@ Each phase lists tasks, the commit, and its done-when checks. Every phase keeps 
 3. Empty states for every view (no plan, no workouts, no metrics, no history for an exercise).
 4. Accessibility pass: labels on every input, `aria-live` for the timer and toasts, focus handling in sheets, contrast check in both themes, 48 px targets, honouring reduced motion for the flash.
 5. Edge cases: a week with no plan, deleting a profile used by a plan (block it or reassign), a custom exercise used in history then deleted (soft-delete), a unit switch in the middle of a workout.
-6. README final pass (screenshots optional), CLAUDE.md update, cache-version bump.
-7. Full run-through against the acceptance checklist below.
+6. Weekly review flow: the review card on Today, accept/dismiss, applying the changes to next week's plan, the end-phase and maintenance flow, edit goal. A UI-strings test that fails on "calorie", "kcal" or "cal ".
+7. README final pass (screenshots optional), CLAUDE.md update, cache-version bump.
+8. Full run-through against the acceptance checklist below.
 
 ---
 
@@ -415,6 +548,10 @@ Each phase lists tasks, the commit, and its done-when checks. Every phase keeps 
 | JSON export re-imports to an identical state | `schema.test.js` round trip, UI smoke run | Phase 1 |
 | `.ics` opens with alerts, re-export doesn't duplicate | `ics.test.js` | Phase 3 |
 | Engine tests pass in Node with no deps | `node --test tests/` | — |
+| 85 → 78 kg in 8 weeks is flagged too fast and offers a 0.5 % date | `weight.test.js` | Phase 3 UI |
+| Phase on, 3 lift + 2 cardio days gives a valid week | `weight.test.js` + `engine.test.js` scenario | Phase 3 UI |
+| Review steps up after two slow, adherent weeks, and says "do the plan first" when not adherent | `weight.test.js` | Phase 6 with sample data |
+| No calories anywhere | UI-strings test | — |
 
 ---
 
