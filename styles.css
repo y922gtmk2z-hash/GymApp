@@ -213,7 +213,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); outline
 .bar.warn .bar-fill { background: var(--warn); }
 .bar.bad .bar-fill { background: var(--bad); }
 .bar.cardio .bar-fill { background: var(--cardio); }
-.vol-row { display: grid; grid-template-columns: 6.5em 1fr 4.2em; align-items: center; gap: 8px; font-size: 0.9rem; }
+.vol-row { display: grid; grid-template-columns: 6.5em 1fr 5.4em; white-space: nowrap; align-items: center; gap: 8px; font-size: 0.9rem; }
 .vol-row .bar { height: 10px; }
 .bar .mark { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--text); opacity: .5; }
 
