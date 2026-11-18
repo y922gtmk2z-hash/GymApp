@@ -4,8 +4,53 @@ import { saveFile, pickFile } from '../share.js';
 import * as store from '../store.js';
 import { isPersisted, backend } from '../db.js';
 import { daysBetween, today, isoDate, fmtDate, parseNum } from '../util.js';
+import { allExercises, allActivities, MUSCLES, MUSCLE_LABEL, EQUIPMENT_LABEL, STRENGTH_EQUIPMENT, CARDIO_EQUIPMENT } from '../data.js';
+
+const lib = { tab: 'exercises', q: '', muscle: '', equip: '' };
+
+export function equipText(equip) {
+  return equip.map((alt) => alt.map((t) => EQUIPMENT_LABEL[t] || t).join(' + ')).join(' or ');
+}
+
+function renderLibrary(root, ctx) {
+  const list = h('div.card');
+  const draw = () => {
+    list.replaceChildren();
+    const q = lib.q.trim().toLowerCase();
+    if (lib.tab === 'exercises') {
+      const items = allExercises(ctx.state.customExercises).filter((e) =>
+        (!q || e.name.toLowerCase().includes(q)) && (!lib.muscle || e.primary === lib.muscle) &&
+        (!lib.equip || e.equip.some((alt) => alt.includes(lib.equip))));
+      if (!items.length) list.append(h('p.muted', 'No exercises match.'));
+      for (const e of items) list.append(h('div.exercise-item',
+        h('div.grow', h('div.ex-name', e.name, e.id.startsWith('c_') ? h('span.badge.accent', { style: { marginLeft: '6px' } }, 'Custom') : null),
+          h('div.small.muted', `${MUSCLE_LABEL[e.primary]}${e.secondary.length ? ' (+ ' + e.secondary.map((m) => MUSCLE_LABEL[m]).join(', ') + ')' : ''} · ${e.type === 'compound' ? 'Compound' : 'Isolation'}`),
+          h('div.tiny.muted', equipText(e.equip)))));
+    } else {
+      const items = allActivities(ctx.state.customActivities).filter((a) => (!q || a.name.toLowerCase().includes(q)) && (!lib.equip || a.equip.some((alt) => alt.includes(lib.equip))));
+      if (!items.length) list.append(h('p.muted', 'No activities match.'));
+      for (const a of items) list.append(h('div.exercise-item',
+        h('div.grow', h('div.ex-name', a.name), h('div.small.muted', `${a.impact === 'low' ? 'Low impact' : 'High impact'} · ${a.intensities.join(', ')}`),
+          h('div.tiny.muted', equipText(a.equip)))));
+    }
+  };
+  const muscleSel = h('select', { 'aria-label': 'Filter by muscle', onchange: (e) => { lib.muscle = e.target.value; draw(); } },
+    h('option', { value: '' }, 'All muscles'), MUSCLES.map((m) => h('option', { value: m, selected: lib.muscle === m }, MUSCLE_LABEL[m])));
+  const equipSel = h('select', { 'aria-label': 'Filter by equipment', onchange: (e) => { lib.equip = e.target.value; draw(); } },
+    h('option', { value: '' }, 'All equipment'),
+    [...STRENGTH_EQUIPMENT, ...CARDIO_EQUIPMENT].map((t) => h('option', { value: t, selected: lib.equip === t }, EQUIPMENT_LABEL[t])));
+  root.append(h('div.stack',
+    segmented({ label: 'Library', value: lib.tab, options: [{ value: 'exercises', label: 'Exercises' }, { value: 'activities', label: 'Cardio' }],
+      onChange: (v) => { lib.tab = v; muscleSel.hidden = v !== 'exercises'; draw(); } }),
+    h('input', { type: 'search', placeholder: 'Search', value: lib.q, 'aria-label': 'Search exercises', oninput: (e) => { lib.q = e.target.value; draw(); } }),
+    h('div.grid2', muscleSel, equipSel),
+    list));
+  muscleSel.hidden = lib.tab !== 'exercises';
+  draw();
+}
 
 const SECTIONS = [
+  { id: 'library', label: 'Exercise library', hint: 'Browse exercises and cardio activities' },
   { id: 'settings', label: 'Settings', hint: 'Units, theme, rest times' },
   { id: 'backup', label: 'Backup', hint: 'Export and import your data' },
 ];
@@ -16,7 +61,7 @@ export function render(root, ctx) {
   if (!section) return renderMenu(root, ctx);
   ctx.setTitle(section.label);
   ctx.setActions(h('a.btn.small', { href: '#/more' }, 'Done'));
-  ({ settings: renderSettings, backup: renderBackup })[section.id](root, ctx);
+  ({ library: renderLibrary, settings: renderSettings, backup: renderBackup })[section.id](root, ctx);
 }
 
 function renderMenu(root, ctx) {
