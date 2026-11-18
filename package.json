@@ -1,0 +1,10 @@
+{
+  "name": "gym-pwa",
+  "private": true,
+  "type": "module",
+  "description": "Offline-first workout PWA. No dependencies; this file only names the test script.",
+  "scripts": {
+    "test": "node --test",
+    "serve": "python3 -m http.server 8080"
+  }
+}
