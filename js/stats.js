@@ -230,3 +230,17 @@ export function weekOverWeek(metrics, key, today) {
   const prev = meanInWindow(metrics, key, addDays(today, -13), addDays(today, -7));
   return { cur, prev, delta: cur !== null && prev !== null ? cur - prev : null };
 }
+
+/** One PR per lift (est. 1RM preferred, then heaviest, then reps), in the order lifts first appear. */
+export function bestPRsByLift(prs = []) {
+  const rank = { e1rm: 0, weight: 1, reps: 2 };
+  const best = new Map();
+  for (const p of prs) {
+    const cur = best.get(p.exId);
+    if (!cur || rank[p.type] < rank[cur.type]) best.set(p.exId, p);
+  }
+  return [...best.values()];
+}
+
+/** Number of distinct lifts with a PR across workouts. */
+export const liftsWithPRs = (workouts) => workouts.reduce((a, w) => a + bestPRsByLift(w.prs).length, 0);
