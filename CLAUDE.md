@@ -12,14 +12,16 @@ Offline-first gym PWA for iPhone. Read `BRIEF.md` (what) and `PLAN.md` (how) bef
 - **No Apple Health integration.** Field names and units mirror Health for manual copying.
 
 ## Module rules
-- `js/engine.js`, `js/weight.js`, `js/stats.js`, `js/schema.js`, `js/ics.js`, `js/charts.js`, `js/units.js`, `js/data.js`, `js/util.js` are **pure and DOM-free**. They take `today`/`now` as arguments, never read the clock or the store. Tested in Node.
+- `js/engine.js`, `js/weight.js`, `js/stats.js`, `js/schema.js`, `js/ics.js`, `js/charts.js`, `js/units.js`, `js/data.js`, `js/util.js`, `js/loading.js`, `js/milestones.js`, `js/csv.js`, `js/sample.js` are **pure and DOM-free**. They take `today`/`now` as arguments, never read the clock or the store. Tested in Node.
 - Views (`js/views/*`) render with `h()` from `js/ui.js`, read `ctx.state`, and change state only via `ctx.commit(fn)`. Use `{ silent: true }` for keystroke-level edits so the view does not re-render under the cursor.
 - Dates are local `YYYY-MM-DD` strings. Never `new Date('YYYY-MM-DD')`; use `util.parseDate`.
 
 ## Layout
 - `js/app.js` boots the store, router and service worker. Views live in `js/views/` (`today`, `plan`, `progress`, `more`, `workout` overlay, `banners` for Today suggestions, `common` helpers).
 - Suggestions (deload, weekly review, backup reminder) are always dismissible, never forced.
-- In-progress workouts commit with `{ flush: true }` so nothing is lost if iOS kills the app.
+- In-progress workouts commit with `{ flush: true }`, which also journals them synchronously to localStorage, so nothing is lost if iOS kills the app.
+- Storage is per person: `meta` lists people, each has a `state:<userId>` document (`js/db.js`). `store.replace()` keeps the current person's id.
+- Session time estimates include `CHANGEOVER_SEC` per exercise; sessions are capped by `maxExercises()` and never keep one-set exercises.
 - `js/sample.js` builds deterministic demo data (More > Settings > Load sample data); keep it valid (`tests/schema.test.js`).
 
 ## Service worker

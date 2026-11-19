@@ -575,3 +575,13 @@ All six phases are built, tested (`node --test`, 109 tests) and merged to `main`
 - **Sample data** (More > Settings) loads 12 weeks of deterministic demo data for trying the app and checking charts.
 - **Extra tests:** a copy test fails on any mention of calories, and another fails if app code makes network calls.
 - **Device-only checks** (install, lock-screen timer, Calendar re-import) are listed in the README and still need doing on an iPhone.
+
+## 11. Review round (all items outside the brief's exclusions)
+
+Built after a full UX and feature review; schema is now version 2 (migration from 1 adds the new fields).
+
+- **Plan quality:** 60 s changeover per exercise in estimates; 4–9 exercises per session by length; trimming removes an exercise rather than leaving one set; dropped muscles rotate between sessions; optional supersets (antagonists, never strength compounds); "what would help" lists concrete changes with the sets they add.
+- **Logger:** weight steppers, tap the set number for warm-up, next-set highlight and auto-scroll, superset alternation with one rest per pair, auto warm-up sets, plate loading per side, heaviest dumbbell/kettlebell per profile, optional reps in reserve (failure holds the weight, easy sets double the step), setup notes per exercise, interval timer, rename and auto-naming, confirm for unticked sets, PRs counted per lift, resume bar on every tab, synchronous journal of the in-progress workout.
+- **UX:** first-run setup; today's session first and one suggestion at a time; rebuild warns about edits and keeps logged sessions; collapsible plan cards; per-muscle focus behind "Customise muscles"; bodyweight lifts charted by reps; "Same as last time" check-ins and metric chips; 44 px controls.
+- **Features:** 4–6 week blocks with a deload week and a block overview; multi-week calendar export; consistency calendar and milestones (with a toast when one is reached); CSV export of sets, cardio and check-ins; several people on one device; favourites and never-use exercises.
+- **Left out on purpose (conflicts with the brief):** sync or accounts, push notifications, Apple Health, AI coaching, nutrition and progress photos.

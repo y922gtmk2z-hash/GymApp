@@ -8,6 +8,7 @@ import { fmtWeight, displayWeight } from '../units.js';
 import { fmtDuration } from '../util.js';
 import { exName, actName } from './common.js';
 import { withSampleData } from '../sample.js';
+import { setsCsv, cardioCsv, checkinsCsv } from '../csv.js';
 import { defaults } from '../schema.js';
 import { daysBetween, today, isoDate, fmtDate, parseNum, uid, slug } from '../util.js';
 import { allExercises, allActivities, MUSCLES, MUSCLE_LABEL, EQUIPMENT_LABEL, STRENGTH_EQUIPMENT, CARDIO_EQUIPMENT, PATTERNS, LIBRARY, ACTIVITIES } from '../data.js';
@@ -28,10 +29,24 @@ function renderLibrary(root, ctx) {
         (!q || e.name.toLowerCase().includes(q)) && (!lib.muscle || e.primary === lib.muscle) &&
         (!lib.equip || e.equip.some((alt) => alt.includes(lib.equip))));
       if (!items.length) list.append(h('p.muted', 'No exercises match.'));
-      for (const e of items) list.append(h(e.id.startsWith('c_') ? 'button.exercise-item.list-btn' : 'div.exercise-item', { type: 'button', onclick: e.id.startsWith('c_') ? () => editCustomExercise(ctx, e) : undefined },
-        h('div.grow', h('div.ex-name', e.name, e.id.startsWith('c_') ? h('span.badge.accent', { style: { marginLeft: '6px' } }, 'Custom') : null),
+      const prefs = ctx.state.exercisePrefs;
+      for (const e of items) {
+        const fav = prefs.favourite.includes(e.id);
+        const never = prefs.exclude.includes(e.id);
+        const info = h('div.grow', h('div.ex-name', fav ? '★ ' : '', e.name, e.id.startsWith('c_') ? h('span.badge.accent', { style: { marginLeft: '6px' } }, 'Custom') : null,
+            never ? h('span.badge.warn', { style: { marginLeft: '6px' } }, 'Never use') : null),
           h('div.small.muted', `${MUSCLE_LABEL[e.primary]}${e.secondary.length ? ' (+ ' + e.secondary.map((m) => MUSCLE_LABEL[m]).join(', ') + ')' : ''} · ${e.type === 'compound' ? 'Compound' : 'Isolation'}`),
-          h('div.tiny.muted', equipText(e.equip)))));
+          h('div.tiny.muted', equipText(e.equip)));
+        const toggle = (key, other) => ctx.commit((st) => {
+          const p = st.exercisePrefs;
+          p[key] = p[key].includes(e.id) ? p[key].filter((x) => x !== e.id) : [...p[key], e.id];
+          p[other] = p[other].filter((x) => x !== e.id);
+        }, { silent: true });
+        list.append(h('div.exercise-item', { style: never ? { opacity: 0.6 } : undefined },
+          e.id.startsWith('c_') ? h('button.grow', { type: 'button', style: { background: 'none', border: 0, textAlign: 'left', padding: 0, color: 'inherit', cursor: 'pointer' }, onclick: () => editCustomExercise(ctx, e) }, info) : info,
+          h('button.btn.icon.small.ghost', { type: 'button', 'aria-pressed': String(fav), 'aria-label': `${fav ? 'Remove' : 'Add'} ${e.name} ${fav ? 'from' : 'to'} favourites`, style: { color: fav ? 'var(--warn)' : 'var(--muted)' }, onclick: () => { toggle('favourite', 'exclude'); draw(); } }, fav ? '★' : '☆'),
+          h('button.btn.icon.small.ghost', { type: 'button', 'aria-pressed': String(never), 'aria-label': `${never ? 'Allow' : 'Never use'} ${e.name}`, style: { color: never ? 'var(--bad)' : 'var(--muted)' }, onclick: () => { toggle('exclude', 'favourite'); draw(); } }, '⊘')));
+      }
     } else {
       const items = allActivities(ctx.state.customActivities).filter((a) => (!q || a.name.toLowerCase().includes(q)) && (!lib.equip || a.equip.some((alt) => alt.includes(lib.equip))));
       if (!items.length) list.append(h('p.muted', 'No activities match.'));
@@ -50,6 +65,7 @@ function renderLibrary(root, ctx) {
       onChange: (v) => { lib.tab = v; muscleSel.hidden = v !== 'exercises'; draw(); } }),
     h('input', { type: 'search', placeholder: 'Search', value: lib.q, 'aria-label': 'Search exercises', oninput: (e) => { lib.q = e.target.value; draw(); } }),
     h('div.grid2', muscleSel, equipSel),
+    lib.tab === 'exercises' ? h('p.tiny.muted', '☆ favourite: picked first by the plan and in swaps. ⊘ never use: the plan and swaps skip it.') : null,
     h('button.btn.block', { type: 'button', onclick: () => (lib.tab === 'exercises' ? editCustomExercise(ctx, null) : editCustomActivity(ctx, null)) }, '+ Add custom'),
     list));
   muscleSel.hidden = lib.tab !== 'exercises';
@@ -57,6 +73,7 @@ function renderLibrary(root, ctx) {
 }
 
 const SECTIONS = [
+  { id: 'people', label: 'People', hint: 'Share this device: separate data for each person' },
   { id: 'workouts', label: 'Workout history', hint: 'Edit or delete past workouts' },
   { id: 'library', label: 'Exercise library', hint: 'Browse exercises and cardio activities' },
   { id: 'profiles', label: 'Equipment profiles', hint: 'Gym, Home and your own setups' },
@@ -70,7 +87,7 @@ export function render(root, ctx) {
   if (!section) return renderMenu(root, ctx);
   ctx.setTitle(section.label);
   ctx.setActions(h('a.btn.small', { href: '#/more' }, 'Done'));
-  ({ workouts: renderWorkouts, library: renderLibrary, profiles: renderProfiles, settings: renderSettings, backup: renderBackup })[section.id](root, ctx);
+  ({ people: renderPeople, workouts: renderWorkouts, library: renderLibrary, profiles: renderProfiles, settings: renderSettings, backup: renderBackup })[section.id](root, ctx);
 }
 
 function renderMenu(root, ctx) {
@@ -150,6 +167,13 @@ function renderBackup(root, ctx) {
       h('p.muted.small', 'Saves everything (plans, workouts, check-ins, settings) as a JSON file. Keep a copy in Files or iCloud Drive.'),
       h('p.small', last ? `Last export: ${fmtDate(last, { year: true })} (${daysBetween(last, today())} days ago)` : 'Never exported.'),
       h('button.btn.primary.block', { type: 'button', onclick: () => doExport(ctx) }, 'Export backup')),
+    h('div.card',
+      h('h2', 'Spreadsheet export'),
+      h('p.muted.small', 'CSV files open in Numbers or Excel. They are for looking at your data, not for restoring it.'),
+      h('div.stack.tight',
+        h('button.btn.block', { type: 'button', onclick: () => saveFile(setsCsv(ctx.state.workouts, { exercise: (id) => exName(ctx.state, id) }), `gym-sets-${isoDate()}.csv`, 'text/csv') }, 'Sets (one row per set)'),
+        h('button.btn.block', { type: 'button', onclick: () => saveFile(cardioCsv(ctx.state.workouts, { activity: (id) => actName(ctx.state, id) }), `gym-cardio-${isoDate()}.csv`, 'text/csv') }, 'Cardio'),
+        h('button.btn.block', { type: 'button', onclick: () => saveFile(checkinsCsv(ctx.state.metrics), `gym-checkins-${isoDate()}.csv`, 'text/csv') }, 'Check-ins'))),
     h('div.card',
       h('h2', 'Import'),
       h('p.muted.small', 'Replaces all data on this device with the backup. The file is checked first.'),
@@ -360,4 +384,37 @@ function workoutSheet(ctx, id) {
         close(); toast('Workout deleted');
       } }, 'Delete'),
       h('button.btn.primary', { type: 'button', onclick: () => { close(); ctx.editWorkout(id); } }, 'Edit'))));
+}
+
+
+// ---------- People ----------
+
+function renderPeople(root, ctx) {
+  const body = h('div.stack', h('p.muted', 'Loading…'));
+  root.append(body);
+  store.people().then(({ current, users }) => {
+    const st = store.get();
+    body.replaceChildren(
+      h('p.small.muted', 'Each person has their own plans, workouts, check-ins and settings. Backups are per person.'),
+      h('div.card', users.map((u) => h('div.exercise-item',
+        h('div.grow', h('div.ex-name', u.name || 'Unnamed', u.id === current ? h('span.badge.good', { style: { marginLeft: '6px' } }, 'You') : null)),
+        u.id !== current ? h('button.btn.small', { type: 'button', onclick: async () => {
+          if (st.activeWorkout) { toast('Finish or discard the workout in progress first'); return; }
+          await store.switchUser(u.id); toast(`Switched to ${u.name || 'Unnamed'}`); ctx.navigate('today');
+        } }, 'Switch') : null,
+        u.id !== current ? h('button.btn.small.danger', { type: 'button', 'aria-label': `Delete ${u.name}`, onclick: async () => {
+          if (!(await confirmSheet(`Delete ${u.name || 'this person'}?`, 'All of their data on this device is deleted. This can\'t be undone.', { ok: 'Delete', danger: true }))) return;
+          await store.deletePerson(u.id); ctx.rerender();
+        } }, 'Delete') : null))),
+      h('button.btn.block', { type: 'button', onclick: () => {
+        if (st.activeWorkout) { toast('Finish or discard the workout in progress first'); return; }
+        let name = '';
+        sheet('Add a person', (close) => h('div.stack',
+          field('Name', h('input', { type: 'text', autocomplete: 'off', oninput: (e) => { name = e.target.value; } })),
+          h('button.btn.primary', { type: 'button', onclick: async () => {
+            if (!name.trim()) { toast('Enter a name'); return; }
+            close(); await store.addPerson(name.trim()); toast(`Welcome, ${name.trim()}`); ctx.navigate('today');
+          } }, 'Add and switch')));
+      } }, '+ Add a person'));
+  });
 }
