@@ -1,6 +1,6 @@
 // Service worker: versioned precache, cache-first, update on next load.
 // Bump VERSION whenever any file in SHELL changes (see CLAUDE.md).
-const VERSION = 3;
+const VERSION = 4;
 const CACHE = `gym-v${VERSION}`;
 
 const SHELL = [
@@ -24,10 +24,13 @@ const SHELL = [
   './js/engine.js',
   './js/ics.js',
   './js/stats.js',
+  './js/timer.js',
   './js/units.js',
+  './js/wakelock.js',
   './js/weight.js',
   './js/views/common.js',
   './js/views/today.js',
+  './js/views/workout.js',
   './js/views/plan.js',
   './js/views/progress.js',
   './js/views/more.js',
