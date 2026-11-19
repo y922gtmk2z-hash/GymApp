@@ -1,4 +1,4 @@
-// Weight-loss phase rules (exercise only, no calories). Pure and DOM-free.
+// Weight-loss phase rules (exercise only, no food tracking). Pure and DOM-free.
 import { addDays, daysBetween, weekStart as weekOf, clamp, weekday } from './util.js';
 import { metricSeries, recentAverage, cardioMinutes, e1rmDrops } from './stats.js';
 

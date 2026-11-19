@@ -560,3 +560,18 @@ Each phase lists tasks, the commit, and its done-when checks. Every phase keeps 
 1. **GitHub Pages:** turn it on for this repo (Settings > Pages > Deploy from branch). Tell me which branch it should serve. I'm working on `claude/affectionate-hawking-jc5nzr`, and Pages usually serves `main`, so the phases will need merging there (or Pages pointed at the work branch while testing).
 2. **Device checks** at the end of Phases 1, 3 and 4, as listed above. Those are the only things I can't verify from here.
 3. Any changes to the decisions in section 0. Otherwise I'll start Phase 1 with them as written.
+
+
+---
+
+## 10. Build status
+
+All six phases are built, tested (`node --test`, 109 tests) and merged to `main`. Notes where the build differs from or adds to the plan above:
+
+- **Review kinds:** a `ramping` outcome was added. It replaces `step_up` while cardio is still building towards 150 min, so the plan isn't stepped up on top of the automatic ramp.
+- **Deload acceptance** sets `lastDeloadWeek` to next week. If next week is already planned it is converted to a deload in place; otherwise the builder applies it when that week is built.
+- **Next-week planning:** a week with no plan offers **Build from last week's settings** (one tap) or **Customise first**.
+- **Accepted weekly-review changes** offer to rebuild the current week so its cardio and step targets update.
+- **Sample data** (More > Settings) loads 12 weeks of deterministic demo data for trying the app and checking charts.
+- **Extra tests:** a copy test fails on any mention of calories, and another fails if app code makes network calls.
+- **Device-only checks** (install, lock-screen timer, Calendar re-import) are listed in the README and still need doing on an iPhone.

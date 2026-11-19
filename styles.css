@@ -337,3 +337,8 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); outline
 @media (min-width: 600px) {
   .grid2.wide3 { grid-template-columns: repeat(3, 1fr); }
 }
+
+/* Banner modifiers tint only the heading (avoid clashing with .good/.warn text utilities). */
+.banner.good, .banner.warn, .banner.info { color: var(--text); }
+.banner.good > strong { color: var(--good); }
+.banner.warn > strong { color: var(--warn); }

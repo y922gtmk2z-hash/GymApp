@@ -53,3 +53,9 @@ export function addIncrement(kg, kind, units) {
   if (!inc) return kg;
   return toKg(fromKg(kg, units) + inc, units);
 }
+
+/** Body weight to one decimal place (lifting weights use plate rounding instead). */
+export function fmtBodyWeight(kg, units) {
+  if (kg === null || kg === undefined) return '–';
+  return `${(Math.round(fromKg(kg, units) * 10) / 10).toLocaleString('en-GB')} ${units}`;
+}
