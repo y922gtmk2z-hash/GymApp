@@ -7,7 +7,7 @@ import { buildCalendar, planEvents } from '../ics.js';
 import { saveFile } from '../share.js';
 import { metricSeries, recentAverage } from '../stats.js';
 import { addDays, fmtDate, today as todayFn, weekStart, weekday, WEEKDAY_SHORT, parseNum, uid, dateForWeekday, clone } from '../util.js';
-import { fmtWeight, toKg, fromKg } from '../units.js';
+import { fmtWeight, toKg, fromKg, fmtBodyWeight } from '../units.js';
 import * as store from '../store.js';
 import {
   library, activities, exName, actName, exById, profileOf, planFor, sessionMinutes, sessionLines,
@@ -36,7 +36,9 @@ export function render(root, ctx) {
   if (!plan) {
     root.append(h('div.card',
       empty('No plan for this week', 'Pick your training days and goals, and the plan is built for you.',
-        h('button.btn.primary', { type: 'button', onclick: () => openBuilder(wk) }, 'Build this week'))));
+        h('div.stack.tight',
+          st.plans[addDays(wk, -7)] ? h('button.btn.primary', { type: 'button', onclick: () => { rebuildWeek(wk); toast('Plan built from last week\'s settings'); } }, 'Build from last week\'s settings') : null,
+          h('button.btn' + (st.plans[addDays(wk, -7)] ? '' : '.primary'), { type: 'button', onclick: () => openBuilder(wk) }, st.plans[addDays(wk, -7)] ? 'Customise first' : 'Build this week')))));
     return;
   }
   const stack = h('div.stack');
@@ -245,6 +247,23 @@ function openAddExercise(wk, id, after) {
   });
 }
 
+// ---------- Rebuild helpers ----------
+
+/** Rebuild a week from the saved builder settings, keeping choices from the existing plan. */
+export function rebuildWeek(wk, { deload } = {}) {
+  const st = store.get();
+  const existing = st.plans[wk];
+  const plan = E.buildWeek({
+    weekStart: wk, goal: st.builder.goal, focus: st.builder.focus, days: st.builder.days, profiles: st.profiles,
+    library: library(st), activities: activities(st), settings: st.settings,
+    previousPlan: existing || st.plans[addDays(wk, -7)] || null,
+    deload: deload ?? (!!existing?.deload || st.lastDeloadWeek === wk),
+    weightGoal: st.weightGoal?.active ? st.weightGoal : null,
+  });
+  store.commit((s) => { s.plans[wk] = plan; });
+  return plan;
+}
+
 // ---------- Builder ----------
 
 const MINUTES = [30, 45, 60, 90];
@@ -328,7 +347,7 @@ export function openBuilder(wk) {
       d.days.map((day) => dayCard(day, true)),
       h('div.section-title', 'Weight loss'),
       h('label.check', h('input', { type: 'checkbox', checked: d.wl.on, onchange: (e) => { d.wl.on = e.target.checked; drawAll(); } }), 'Weight-loss phase (exercise only)'),
-      d.wl.on ? wlSection() : h('p.small.muted', 'Adds cardio, daily steps and a weight target with weekly check-ins. No calorie counting.'),
+      d.wl.on ? wlSection() : h('p.small.muted', 'Adds cardio, daily steps and a weight target with weekly check-ins. Exercise only: no food tracking.'),
       errorBox,
       h('button.btn.primary.block', { type: 'button', onclick: generate }, 'Build plan'),
     ));
@@ -351,7 +370,7 @@ export function openBuilder(wk) {
     const lifting = d.days.map((x) => x.weekday);
     const inUnit = (kg) => (kg === null || kg === undefined ? '' : String(Math.round(fromKg(kg, units) * 10) / 10));
     return h('div.stack',
-      wl.existing ? h('p.small.muted', `Phase started ${fmtDate(store.get().weightGoal.startDate, { year: true })} at ${fmtWeight(store.get().weightGoal.startKg, units)}.`)
+      wl.existing ? h('p.small.muted', `Phase started ${fmtDate(store.get().weightGoal.startDate, { year: true })} at ${fmtBodyWeight(store.get().weightGoal.startKg, units)}.`)
         : field(`Current weight (${units})`, numInput({ value: inUnit(wl.currentKg), label: 'Current weight', onInput: (v) => { wl.currentKg = toKg(parseNum(v), units); updateFeas(); } }),
           'From your recent weigh-ins, or enter it now.'),
       field(`Target weight (${units})`, numInput({ value: inUnit(wl.targetKg), label: 'Target weight', onInput: (v) => { wl.targetKg = toKg(parseNum(v), units); updateFeas(); } })),
@@ -410,7 +429,7 @@ export function openBuilder(wk) {
     const previous = existing || st.plans[addDays(wk, -7)] || null;
     const plan = E.buildWeek({
       weekStart: wk, goal: d.goal, focus: d.focus, days: d.days, profiles: st.profiles, library: library(st),
-      activities: activities(st), settings: st.settings, previousPlan: previous, deload: !!existing?.deload,
+      activities: activities(st), settings: st.settings, previousPlan: previous, deload: !!existing?.deload || st.lastDeloadWeek === wk,
       weightGoal: goal?.active ? goal : null,
     });
     store.commit((s) => {

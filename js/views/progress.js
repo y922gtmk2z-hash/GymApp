@@ -6,7 +6,7 @@ import * as S from '../stats.js';
 import * as W from '../weight.js';
 import * as E from '../engine.js';
 import { MUSCLES, MUSCLE_LABEL } from '../data.js';
-import { fromKg, toKg, fmtWeight } from '../units.js';
+import { fromKg, toKg, fmtWeight, fmtBodyWeight } from '../units.js';
 import { today as todayFn, addDays, fmtDate, parseNum, uid, weekStart, round } from '../util.js';
 import { exName, exById, planFor } from './common.js';
 
@@ -164,9 +164,9 @@ function goalCard(ctx) {
   return h('div.card.accent',
     h('div.card-head', h('h3', 'Weight goal'), h('span.badge.cardio', 'Weight-loss phase')),
     h('div.tiles',
-      h('div.tile', h('div.v', fmtWeight(g.startKg, units)), h('div.l', `Start · ${fmtDate(g.startDate)}`)),
-      h('div.tile', h('div.v', avg7 !== null ? fmtWeight(avg7, units) : '–'), h('div.l', 'Now (7-day avg)')),
-      h('div.tile', h('div.v', fmtWeight(g.targetKg, units)), h('div.l', `Target · ${fmtDate(g.targetDate)}`))),
+      h('div.tile', h('div.v', fmtBodyWeight(g.startKg, units)), h('div.l', `Start · ${fmtDate(g.startDate)}`)),
+      h('div.tile', h('div.v', avg7 !== null ? fmtBodyWeight(avg7, units) : '–'), h('div.l', 'Now (7-day avg)')),
+      h('div.tile', h('div.v', fmtBodyWeight(g.targetKg, units)), h('div.l', `Target · ${fmtDate(g.targetDate)}`))),
     bar(pct, 100, { cls: '.good', label: 'Progress to weight target' }),
     h('div.small', `${Math.round(pct)}% of the way`),
     trend.reason

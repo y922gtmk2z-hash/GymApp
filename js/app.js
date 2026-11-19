@@ -7,6 +7,7 @@ import * as plan from './views/plan.js';
 import * as progress from './views/progress.js';
 import * as more from './views/more.js';
 import * as workout from './views/workout.js';
+import './views/banners.js';
 
 const VIEWS = { today, plan, progress, more };
 const viewEl = document.getElementById('view');

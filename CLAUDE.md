@@ -16,6 +16,12 @@ Offline-first gym PWA for iPhone. Read `BRIEF.md` (what) and `PLAN.md` (how) bef
 - Views (`js/views/*`) render with `h()` from `js/ui.js`, read `ctx.state`, and change state only via `ctx.commit(fn)`. Use `{ silent: true }` for keystroke-level edits so the view does not re-render under the cursor.
 - Dates are local `YYYY-MM-DD` strings. Never `new Date('YYYY-MM-DD')`; use `util.parseDate`.
 
+## Layout
+- `js/app.js` boots the store, router and service worker. Views live in `js/views/` (`today`, `plan`, `progress`, `more`, `workout` overlay, `banners` for Today suggestions, `common` helpers).
+- Suggestions (deload, weekly review, backup reminder) are always dismissible, never forced.
+- In-progress workouts commit with `{ flush: true }` so nothing is lost if iOS kills the app.
+- `js/sample.js` builds deterministic demo data (More > Settings > Load sample data); keep it valid (`tests/schema.test.js`).
+
 ## Service worker
 - When you add, remove or change any shell file, **bump `VERSION` in `sw.js`** and keep the `SHELL` list in sync. `tests/sw.test.js` fails if the list and disk differ.
 

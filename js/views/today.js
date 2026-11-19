@@ -3,7 +3,7 @@ import { h, empty, bar } from '../ui.js';
 import { today as todayFn, weekStart, addDays, fmtDate, daysBetween, round } from '../util.js';
 import * as S from '../stats.js';
 import * as W from '../weight.js';
-import { fmtWeight, fromKg } from '../units.js';
+import { fmtWeight, fromKg, fmtBodyWeight } from '../units.js';
 import { checkInSheet } from './progress.js';
 import { planFor, weekStrip, sessionLines, profileOf, sessionMinutes, workoutForSession, dayLabel } from './common.js';
 
@@ -98,7 +98,7 @@ function summaryCard(st, plan, today, wk) {
     const g = st.weightGoal;
     const avg7 = S.recentAverage(S.metricSeries(st.metrics, 'weightKg'), today, 7);
     const pct = W.progressPct(g, avg7);
-    card.append(h('div.hr'), h('div.row.between', h('span.small', `Weight goal: ${avg7 !== null ? fmtWeight(avg7, units) : '–'} → ${fmtWeight(g.targetKg, units)}`), h('a.small', { href: '#/progress' }, `${Math.round(pct)}%`)),
+    card.append(h('div.hr'), h('div.row.between', h('span.small', `Weight goal: ${avg7 !== null ? fmtBodyWeight(avg7, units) : '–'} → ${fmtBodyWeight(g.targetKg, units)}`), h('a.small', { href: '#/progress' }, `${Math.round(pct)}%`)),
       bar(pct, 100, { cls: '.good', label: 'Progress to weight target' }));
   }
   return card;
