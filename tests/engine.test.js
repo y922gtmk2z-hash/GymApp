@@ -133,15 +133,19 @@ describe('exercise picking', () => {
 });
 
 describe('time budget and ordering', () => {
-  test('estimate formula', () => {
+  test('estimate formula includes changeover per exercise', () => {
     const s = { minutes: 45, exercises: [{ sets: 3, restSec: 120 }, { sets: 2, restSec: 60 }], cardio: [] };
-    assert.equal(E.estimateSessionSec(s), 300 + 3 * 160 + 2 * 100);
+    assert.equal(E.estimateSessionSec(s), 300 + 2 * 60 + 3 * 160 + 2 * 100);
     s.cardio = [{ minutes: 10, finisher: true }];
-    assert.equal(E.estimateSessionSec(s), 300 + 3 * 160 + 2 * 100 + 600);
+    assert.equal(E.estimateSessionSec(s), 300 + 2 * 60 + 3 * 160 + 2 * 100 + 600);
   });
-  test('trims lowest focus first and never exceeds the budget', () => {
+  test('supersets rest once per round', () => {
+    const s = { minutes: 45, cardio: [], exercises: [{ sets: 3, restSec: 90, group: 'A' }, { sets: 3, restSec: 60, group: 'A' }] };
+    assert.equal(E.estimateSessionSec(s), 300 + 120 + 6 * 40 + 3 * 90);
+  });
+  test('trims lowest focus first, removes rather than leaving one-set exercises, fits the budget', () => {
     const session = {
-      minutes: 25, cardio: [],
+      minutes: 28, cardio: [],
       exercises: [
         { exId: 'a', muscle: 'chest', type: 'compound', sets: 4, restSec: 120 },
         { exId: 'b', muscle: 'back', type: 'compound', sets: 4, restSec: 120 },
@@ -150,12 +154,20 @@ describe('time budget and ordering', () => {
     };
     const focus = { chest: 'priority', back: 'maintain', biceps: 'minimal' };
     const { session: out, trimmed } = E.fitTimeBudget(session, focus, { chest: 3 });
-    assert.ok(E.estimateSessionSec(out) <= 25 * 60);
+    assert.ok(E.estimateSessionSec(out) <= 28 * 60);
     assert.equal(trimmed.biceps, 3, 'minimal muscle trimmed out first');
-    assert.ok((trimmed.back || 0) >= 1);
     assert.equal(trimmed.chest || 0, 0, 'priority untouched while lower tiers remain');
-    const again = E.fitTimeBudget(session, focus, { chest: 3 });
-    assert.deepEqual(again, { session: out, trimmed }, 'deterministic');
+    assert.ok(out.exercises.every((e) => e.sets >= 2), 'no one-set leftovers');
+    assert.deepEqual(E.fitTimeBudget(session, focus, { chest: 3 }), { session: out, trimmed }, 'deterministic');
+  });
+  test('exercise cap drops whole exercises, keeping muscles represented where possible', () => {
+    const ex = (exId, muscle, type = 'isolation') => ({ exId, muscle, type, sets: 2, restSec: 60 });
+    const session = { minutes: 90, cardio: [], exercises: [ex('a', 'chest', 'compound'), ex('b', 'chest'), ex('c', 'back', 'compound'), ex('d', 'biceps'), ex('e', 'core')] };
+    const { session: out } = E.fitTimeBudget(session, {}, {}, { cap: 4 });
+    assert.equal(out.exercises.length, 4);
+    assert.ok(!out.exercises.some((e) => e.exId === 'b'), 'second chest exercise goes first');
+    assert.equal(E.maxExercises(45), 6);
+    assert.equal(E.maxExercises(45, true), 8);
   });
   test('core and calves last, compounds before isolations', () => {
     const ex = [
@@ -213,6 +225,51 @@ describe('buildWeek', () => {
     const bare = [{ id: 'bare', name: 'Bare', equipment: [] }];
     const plan = E.buildWeek({ weekStart: '2026-11-16', goal: 'muscle', focus: defaultFocus(), profiles: bare, library: LIBRARY.filter((e) => e.primary !== 'calves' || e.equip[0][0] !== 'bodyweight'), days: days(3, 'bare') });
     assert.ok(plan.warnings.some((w) => w.includes('calves')));
+  });
+});
+
+describe('realistic sessions', () => {
+  test('3 x 45 min full body: capped, no one-set exercises, fits with changeover', () => {
+    const plan = build({ days: days(3, 'gym', 45) });
+    for (const s of plan.sessions) {
+      assert.ok(s.exercises.length <= E.maxExercises(45), `${s.name} has ${s.exercises.length} exercises`);
+      assert.ok(s.exercises.every((e) => e.sets >= 2), `${s.name} has a one-set exercise`);
+      assert.ok(E.estimateSessionSec(s) <= 45 * 60);
+    }
+    const dropped = plan.sessions.map((s) => MUSCLES.filter((m) => !s.exercises.some((e) => e.muscle === m)).join(','));
+    assert.ok(new Set(dropped).size > 1, 'different sessions drop different muscles');
+  });
+  test('supersets pair antagonists side by side and fit more sets', () => {
+    const plain = build({ days: days(3, 'gym', 45) });
+    const ss = build({ days: days(3, 'gym', 45), supersets: true });
+    const s0 = ss.sessions[0].exercises;
+    const groups = {};
+    s0.forEach((e, i) => { if (e.group) (groups[e.group] ||= []).push(i); });
+    assert.ok(Object.keys(groups).length >= 1);
+    for (const idx of Object.values(groups)) { assert.equal(idx.length, 2); assert.equal(idx[1], idx[0] + 1); }
+    assert.ok(E.targetCoverage(ss) > E.targetCoverage(plain));
+    assert.equal(ss.supersets, true);
+  });
+  test('strength mode never supersets compounds', () => {
+    const p = build({ goal: 'strength', supersets: true, days: days(4, 'gym', 60) });
+    for (const s of p.sessions) for (const e of s.exercises) if (e.group) assert.equal(e.type, 'isolation');
+  });
+  test('what would help lists concrete gains', () => {
+    const args = { weekStart: '2026-11-16', goal: 'muscle', focus: defaultFocus(), profiles, library: LIBRARY, days: days(3, 'home', 45) };
+    const opts = E.whatWouldHelp(args, E.buildWeek(args));
+    assert.ok(opts.length >= 2);
+    assert.ok(opts.every((o) => o.gain > 0));
+    assert.ok(opts.some((o) => o.id === 'add_day'));
+    assert.ok(opts[0].gain >= opts[opts.length - 1].gain);
+  });
+  test('never-use exercises are excluded; favourites are preferred', () => {
+    const p = build({ prefs: { exclude: ['bench_bb', 'squat_bb'], favourite: ['incline_db'] } });
+    const ids = p.sessions.flatMap((s) => s.exercises.map((e) => e.exId));
+    assert.ok(!ids.includes('bench_bb') && !ids.includes('squat_bb'));
+    assert.ok(ids.includes('incline_db'));
+    const alts = E.suggestAlternatives('bench_db', gym, LIBRARY, { exclude: ['bench_bb'], favourite: ['pec_deck'] });
+    assert.equal(alts[0].id, 'pec_deck');
+    assert.ok(!alts.some((e) => e.id === 'bench_bb'));
   });
 });
 

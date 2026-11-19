@@ -65,3 +65,19 @@ test('sample data is a valid state', async () => {
   assert.deepEqual(validate(s), []);
   assert.ok(s.workouts.length > 30 && s.metrics.length > 30 && s.weightGoal.active);
 });
+
+test('migrates a version 1 document to version 2', () => {
+  const v1 = defaults();
+  v1.version = 1;
+  for (const k of ['exercisePrefs', 'exerciseNotes', 'block', 'milestonesSeen', 'onboarded']) delete v1[k];
+  delete v1.settings.plates; delete v1.settings.logEffort;
+  v1.profiles = v1.profiles.map(({ weights, ...p }) => p);
+  v1.workouts.push({ id: 'w', date: '2026-11-01', exercises: [] });
+  const s = migrate(v1);
+  assert.equal(s.version, 2);
+  assert.deepEqual(s.exercisePrefs, { exclude: [], favourite: [] });
+  assert.deepEqual(s.settings.plates, [25, 20, 15, 10, 5, 2.5, 1.25]);
+  assert.equal(s.onboarded, true, 'existing users skip first-run setup');
+  assert.ok(s.profiles.every((p) => p.weights));
+  assert.deepEqual(validate(s), []);
+});
