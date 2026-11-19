@@ -9,6 +9,7 @@ import { MUSCLES, MUSCLE_LABEL } from '../data.js';
 import { fromKg, toKg, fmtWeight, fmtBodyWeight } from '../units.js';
 import { today as todayFn, addDays, fmtDate, parseNum, uid, weekStart, round } from '../util.js';
 import { exName, exById, planFor } from './common.js';
+import { milestones, activityByDay } from '../milestones.js';
 
 export const METRICS = [
   { key: 'weightKg', label: 'Weight', unit: 'kg', weight: true, dp: 1, core: true },
@@ -293,6 +294,38 @@ function renderRepsLift(stack, ctx, ids) {
     targetBlock(ctx, key, { start: series[0]?.y ?? null, current: series[series.length - 1]?.y ?? null, def: { unit: 'reps' }, label: 'Reps', fmt: (v) => `${v} reps` })));
 }
 
+// ---------- Consistency and milestones ----------
+
+function consistencyCard(st, today) {
+  const weeks = 16;
+  const { from, days } = activityByDay(st.workouts, today, weeks);
+  const cells = [];
+  for (let i = 0; i < weeks * 7; i++) {
+    const d = addDays(from, i);
+    const n = days[d] || 0;
+    cells.push(h('span.hm', { class: d > today ? 'future' : n >= 2 ? 'l2' : n ? 'l1' : '', title: `${fmtDate(d, { weekday: true })}: ${n ? n + ' workout' + (n > 1 ? 's' : '') : 'rest'}` }));
+  }
+  const streak = E.trainingWeekStreak(st.workouts, today, null);
+  const active = Object.keys(days).length;
+  return h('div.card',
+    h('div.card-head', h('h3', 'Consistency'), h('span.small.muted', `last ${weeks} weeks`)),
+    h('div.heatmap', { role: 'img', 'aria-label': `Trained on ${active} days in the last ${weeks} weeks` }, cells),
+    h('div.tiles',
+      h('div.tile', h('div.v', String(streak)), h('div.l', 'Weeks in a row')),
+      h('div.tile', h('div.v', String(active)), h('div.l', `Training days`))));
+}
+
+function milestonesCard(st) {
+  const all = milestones({ workouts: st.workouts, metrics: st.metrics, weightGoal: st.weightGoal });
+  const icon = { consistency: '📅', strength: '🏋️', cardio: '❤️', body: '⚖️' };
+  return h('div.card',
+    h('div.card-head', h('h3', 'Milestones'), h('span.small.muted', `${all.length} reached`)),
+    all.length ? [...all].reverse().slice(0, 8).map((m) => h('div.row.between', { style: { padding: '4px 0' } },
+      h('span', `${icon[m.kind] || '⭐'} ${m.title}`), h('span.small.muted', fmtDate(m.date, { year: true }))))
+      : h('p.small.muted', 'Your first workout is your first milestone.'),
+    all.length > 8 ? h('p.tiny.muted', `${all.length - 8} earlier milestones.`) : null);
+}
+
 // ---------- Training volume ----------
 
 function renderVolume(stack, ctx) {
@@ -302,6 +335,7 @@ function renderVolume(stack, ctx) {
     stack.append(h('div.card', empty('No training yet', 'Weekly sets, sessions, volume and cardio appear once you log workouts.')));
     return;
   }
+  stack.append(consistencyCard(st, today), milestonesCard(st));
   const earliest = st.workouts.reduce((a, w) => (w.date < a ? w.date : a), today);
   const from = C.rangeStart(ui.range, today, earliest);
   const weeks = S.weeksBetween(from, today);

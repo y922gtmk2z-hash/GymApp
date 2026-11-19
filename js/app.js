@@ -3,6 +3,7 @@ import * as store from './store.js';
 import { requestPersist } from './db.js';
 import { h, clear, toast } from './ui.js';
 import { fmtDuration } from './util.js';
+import { milestones } from './milestones.js';
 import * as today from './views/today.js';
 import * as plan from './views/plan.js';
 import * as progress from './views/progress.js';
@@ -119,6 +120,15 @@ async function boot() {
   addEventListener('hashchange', () => render());
   render();
   workout.resumeIfActive();
+  // Celebrate milestones reached by the workout just saved (compare with and without it).
+  workout.afterFinish.push((saved) => {
+    const s = store.get();
+    const before = new Set(milestones({ ...s, workouts: s.workouts.filter((w) => w.id !== saved.id) }).map((m) => m.id));
+    const fresh = milestones(s).filter((m) => !before.has(m.id));
+    if (!fresh.length) return;
+    store.commit((x) => { x.milestonesSeen.push(...fresh.map((m) => m.id)); }, { silent: true });
+    setTimeout(() => toast(`🏅 Milestone: ${fresh.map((m) => m.title).join(', ')}`, { ms: 6000 }), 600);
+  });
   registerSW();
   requestPersist();
   for (const f of hooks) f({ state, navigate });

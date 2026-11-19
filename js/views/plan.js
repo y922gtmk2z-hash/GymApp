@@ -6,7 +6,7 @@ import { MUSCLES, MUSCLE_LABEL } from '../data.js';
 import { buildCalendar, planEvents } from '../ics.js';
 import { saveFile } from '../share.js';
 import { metricSeries, recentAverage } from '../stats.js';
-import { addDays, fmtDate, today as todayFn, weekStart, weekday, WEEKDAY_SHORT, parseNum, uid, dateForWeekday, clone } from '../util.js';
+import { addDays, daysBetween, fmtDate, today as todayFn, weekStart, weekday, WEEKDAY_SHORT, parseNum, uid, dateForWeekday, clone } from '../util.js';
 import { fmtWeight, toKg, fromKg, fmtBodyWeight } from '../units.js';
 import * as store from '../store.js';
 import {
@@ -25,7 +25,7 @@ export function render(root, ctx) {
   const wk = viewWeek;
   const plan = planFor(st, wk);
   ctx.setTitle('Plan');
-  ctx.setActions(plan ? h('button.btn.small', { type: 'button', onclick: () => exportIcs(wk) }, 'Export') : null);
+  ctx.setActions(plan ? h('button.btn.small', { type: 'button', onclick: () => exportSheet(wk) }, 'Export') : null);
 
   root.append(h('div.row.between.nowrap', { style: { marginBottom: '12px' } },
     h('button.btn.icon', { type: 'button', 'aria-label': 'Previous week', onclick: () => { viewWeek = addDays(wk, -7); ctx.rerender(); } }, '‹'),
@@ -48,6 +48,8 @@ export function render(root, ctx) {
       plan.stepTarget ? h('span.badge.cardio', `Steps ${plan.stepTarget.toLocaleString('en-GB')}/day`) : null),
     h('button.btn.small', { type: 'button', onclick: () => openBuilder(wk) }, 'Rebuild')));
 
+  const bc = blockCard(st, wk, today, ctx);
+  if (bc) stack.append(bc);
   for (const w of plan.warnings || []) stack.append(h('div.banner.warn', h('span.small', w)));
 
   for (const s of plan.sessions) stack.append(sessionCard(st, plan, s, today, ctx));
@@ -152,18 +154,48 @@ function doSkip(wk, id) {
   const m = Object.values(moved).reduce((a, b) => a + b, 0);
   const l = Object.entries(lost).filter(([, n]) => n > 0);
   const lostN = l.reduce((a, [, n]) => a + n, 0);
-  toast(['Skipped.', m ? `${m} sets moved to later sessions.` : '', lostN ? `${lostN} sets didn't fit this week.` : ''].filter(Boolean).join(' '));
+  const sets = (n) => `${n} set${n === 1 ? '' : 's'}`;
+  toast(['Skipped.', m ? `${sets(m)} moved to later sessions.` : '', lostN ? `${sets(lostN)} didn't fit this week.` : ''].filter(Boolean).join(' '));
 }
 
-async function exportIcs(wk) {
+function exportSheet(wk) {
   const st = store.get();
-  store.commit((s) => { s.plans[wk].icsSequence = (s.plans[wk].icsSequence || 0) + 1; }, { silent: true });
-  const plan = store.get().plans[wk];
-  const events = planEvents(plan, { exercise: (id) => exName(st, id), activity: (id) => actName(st, id), zone2: zone2For(st, todayFn()) });
+  const ahead = [0, 1, 2, 3].map((i) => addDays(wk, 7 * i)).filter((w) => st.plans[w]);
+  sheet('Export to Calendar', (close) => h('div.stack',
+    h('p.small.muted', `Adds sessions to Apple Calendar with an alert ${st.settings.alarmMinutes} min before. Exporting again updates the same events.`),
+    h('button.btn.block', { type: 'button', onclick: () => { close(); exportIcs([wk]); } }, 'This week'),
+    ahead.length > 1 ? h('button.btn.primary.block', { type: 'button', onclick: () => { close(); exportIcs(ahead); } }, `Next ${ahead.length} planned weeks`) : null,
+    ahead.length <= 1 ? h('p.tiny.muted', 'Plan more weeks ahead (Rebuild > Plan ahead) to export several at once.') : null));
+}
+
+async function exportIcs(weeks) {
+  const st = store.get();
+  store.commit((s) => { for (const w of weeks) s.plans[w].icsSequence = (s.plans[w].icsSequence || 0) + 1; }, { silent: true });
+  const names = { exercise: (id) => exName(st, id), activity: (id) => actName(st, id), zone2: zone2For(st, todayFn()) };
+  const events = weeks.flatMap((w) => planEvents(store.get().plans[w], names));
   if (!events.length) { toast('Nothing to export'); return; }
   const text = buildCalendar(events, { alarmMinutes: st.settings.alarmMinutes, now: new Date() });
-  const r = await saveFile(text, `gym-week-${wk}.ics`, 'text/calendar');
+  const r = await saveFile(text, weeks.length > 1 ? `gym-${weeks[0]}-${weeks.length}-weeks.ics` : `gym-week-${weeks[0]}.ics`, 'text/calendar');
   if (r !== 'cancelled') toast('Calendar file ready. Open it to add to Calendar.');
+}
+
+function blockCard(st, wk, today, ctx) {
+  const b = st.block;
+  if (!b) return null;
+  const i = Math.round(daysBetween(b.startWeek, wk) / 7);
+  if (i < 0 || i >= b.weeks) return null;
+  return h('div.card.flat',
+    h('div.card-head', h('h3', `Block: week ${i + 1} of ${b.weeks}`), b.deloadLast ? h('span.small.muted', 'deload in the last week') : null),
+    Array.from({ length: b.weeks }, (_, k) => {
+      const w = addDays(b.startWeek, 7 * k);
+      const p = st.plans[w];
+      const sess = (p?.sessions || []).filter((s) => !s.skipped);
+      const done = sess.filter((s) => st.workouts.some((x) => x.sessionId === s.id)).length;
+      return h('button.list-btn', { type: 'button', 'aria-current': w === wk ? 'true' : undefined, style: w === wk ? { color: 'var(--accent)' } : undefined,
+        onclick: () => { viewWeek = w; ctx.rerender(); } },
+        h('span', `Week ${k + 1} · ${fmtDate(w)}`, p?.deload ? h('span.badge.warn', { style: { marginLeft: '6px' } }, 'Deload') : null),
+        h('span.small.muted', p ? (w > today ? `${sess.length} sessions` : `${done}/${sess.length} done`) : 'not planned'));
+    }));
 }
 
 // ---------- Move ----------
@@ -316,6 +348,7 @@ function draftFrom(st, wk) {
     b.goal = plan.goal;
     b.focus = { ...plan.focus };
     b.supersets = !!plan.supersets;
+    b.weeks = 1;
     b.days = plan.days.map((d) => ({ weekday: weekday(d.date), profileId: d.profileId, minutes: d.minutes, startTime: d.startTime }));
   }
   const g = st.weightGoal;
@@ -391,6 +424,11 @@ export function openBuilder(wk) {
       d.days.map((day) => dayCard(day, true)),
       h('label.check', h('input', { type: 'checkbox', checked: !!d.supersets, onchange: (e) => { d.supersets = e.target.checked; } }),
         h('span', 'Use supersets ', h('span.small.muted', '(pair opposing muscles back to back to fit more into short sessions)'))),
+      h('div.section-title', 'Plan ahead'),
+      segmented({ label: 'Weeks to plan', value: d.weeks || 1, options: [1, 4, 5, 6].map((n) => ({ value: n, label: n === 1 ? 'This week' : `${n} weeks` })),
+        onChange: (v) => { d.weeks = v; if (v > 1 && d.deloadLast === undefined) d.deloadLast = true; drawAll(); } }),
+      (d.weeks || 1) > 1 ? h('label.check', h('input', { type: 'checkbox', checked: d.deloadLast !== false, onchange: (e) => { d.deloadLast = e.target.checked; } }),
+        h('span', 'Make the last week a deload ', h('span.small.muted', '(lighter week to recover)'))) : null,
       h('div.section-title', 'Weight loss'),
       h('label.check', h('input', { type: 'checkbox', checked: d.wl.on, onchange: (e) => { d.wl.on = e.target.checked; drawAll(); } }), 'Weight-loss phase (exercise only)'),
       d.wl.on ? wlSection() : h('p.small.muted', 'Adds cardio, daily steps and a weight target with weekly check-ins. Exercise only: no food tracking.'),
@@ -483,14 +521,35 @@ export function openBuilder(wk) {
       activities: activities(st), settings: st.settings, supersets: !!d.supersets, prefs: st.exercisePrefs, previousPlan: previous, deload: !!existing?.deload || st.lastDeloadWeek === wk,
       weightGoal: goal?.active ? goal : null,
     });
+    // Further weeks of a block, chained so exercise choices carry over; optional deload last.
+    const weeks = d.weeks || 1;
+    const extra = [];
+    let prev = plan;
+    for (let i = 1; i < weeks; i++) {
+      const w = addDays(wk, 7 * i);
+      const p = E.buildWeek({
+        weekStart: w, goal: d.goal, focus: d.focus, days: d.days, profiles: st.profiles, library: library(st), activities: activities(st),
+        settings: st.settings, supersets: !!d.supersets, prefs: st.exercisePrefs, previousPlan: st.plans[w] || prev,
+        deload: !!d.deloadLast && i === weeks - 1, weightGoal: goal?.active ? goal : null,
+      });
+      extra.push([w, keepFinished(st.plans[w], p, st)]);
+      prev = p;
+    }
+    if (extra.some(([w]) => st.plans[w]?.edited)) {
+      const ok = await confirmSheet('Replace planned weeks?', 'Some of the following weeks already have plans with your edits. They will be rebuilt.', { ok: 'Replace' });
+      if (!ok) return;
+    }
     store.commit((s) => {
-      s.builder = { ...s.builder, goal: d.goal, focus: { ...d.focus }, days: clone(d.days), supersets: !!d.supersets };
+      s.builder = { ...s.builder, goal: d.goal, focus: { ...d.focus }, days: clone(d.days), supersets: !!d.supersets, weeks, deloadLast: !!d.deloadLast };
       s.weightGoal = goal || null;
       if (newMetric) s.metrics.push(newMetric);
       s.plans[wk] = keepFinished(existing, plan, s);
+      for (const [w, p] of extra) s.plans[w] = p;
+      s.block = weeks > 1 ? { startWeek: wk, weeks, deloadLast: !!d.deloadLast } : (s.block && wk >= s.block.startWeek && wk < addDays(s.block.startWeek, 7 * s.block.weeks) ? null : s.block);
+      if (weeks > 1 && d.deloadLast) s.lastDeloadWeek = addDays(wk, 7 * (weeks - 1));
     });
     closeSheet();
-    toast('Plan built');
+    toast(weeks > 1 ? `${weeks}-week block planned` : 'Plan built');
   }
 
   drawAll();

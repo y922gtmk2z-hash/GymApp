@@ -13,6 +13,14 @@ A free, offline-first workout app for iPhone, installed from Safari as a web app
 4. **Progress** tab > **Check in** once a week (weight, resting heart rate, waist). Charts show body metrics, estimated 1RM per lift, weekly sets per muscle, sessions, volume and cardio. Tap **Set target** under any chart.
 5. **Weight loss (optional):** in the plan builder, turn on **Weight-loss phase**, enter a target weight and a date or pace, and pick cardio days. The plan adds cardio, finishers and a daily step target. Each week Today shows a review that suggests holding, stepping up or easing off, based only on your weigh-in trend. There is no food or calorie tracking.
 
+More things you can do:
+
+- **Supersets and blocks:** in the plan builder, turn on supersets to fit more into short sessions, and plan 4–6 weeks ahead with a deload in the last week. Export several weeks to Calendar at once.
+- **In the gym:** −/+ buttons change the weight by the right step, warm-up sets are added to your first big lift, barbell lifts show the plates for each side, and setup notes (seat height, grip) stay with each exercise. Optionally log reps in reserve (More > Settings) to fine-tune weight jumps. Interval sessions have a work/rest timer.
+- **Your gear:** set the heaviest dumbbell and kettlebell for each equipment profile; progression then adds reps instead of weight you don't have. In the library, star favourites and mark exercises you never want to use.
+- **Progress:** a consistency calendar, milestones, and bodyweight exercises tracked by reps. Export sets, cardio and check-ins as CSV for a spreadsheet.
+- **Sharing a device:** More > People gives each person their own data.
+
 Want to look around first? **More > Settings > Load sample data** fills the app with 12 weeks of example data (it replaces your data, so use it before you start or after a backup).
 
 ## Run it locally

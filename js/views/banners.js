@@ -23,7 +23,11 @@ function reviewBanner(ctx, { today, wk }) {
       if (accepted && r.changes.end) s.weightGoal = W.endGoal(s.weightGoal, todayFn());
     });
     if (accepted && hasChanges && !r.changes.end && store.get().plans[wk]) {
-      toast('Applied. Update this week\'s plan too?', { action: 'Update', ms: 8000, onAction: () => { rebuildWeek(wk); toast('This week updated'); } });
+      toast('Applied. Update this week\'s plan too?', { action: 'Update', ms: 8000, onAction: () => {
+        let n = 0;
+        for (let i = 0; i < 6; i++) { const w = addDays(wk, 7 * i); if (i === 0 || store.get().plans[w]) { if (store.get().plans[w] || i === 0) { rebuildWeek(w); n++; } } }
+        toast(n > 1 ? `${n} planned weeks updated` : 'This week updated');
+      } });
     } else if (accepted && r.changes.end) toast('Phase ended. Set a new target any time in Plan.');
   };
   const cls = { on_track: 'good', goal_reached: 'good', recomp: 'good' }[r.kind] || (['adherence', 'need_data', 'ramping'].includes(r.kind) ? 'info' : 'warn');
