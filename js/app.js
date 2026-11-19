@@ -6,6 +6,7 @@ import * as today from './views/today.js';
 import * as plan from './views/plan.js';
 import * as progress from './views/progress.js';
 import * as more from './views/more.js';
+import * as workout from './views/workout.js';
 
 const VIEWS = { today, plan, progress, more };
 const viewEl = document.getElementById('view');
@@ -44,6 +45,9 @@ function render({ keepScroll = false } = {}) {
     setTitle: (t) => { titleEl.textContent = t; document.title = t === 'Gym' ? 'Gym' : `${t} · Gym`; },
     setActions: (...nodes) => { clear(actionsEl); actionsEl.append(...nodes.filter(Boolean)); },
     rerender: () => render({ keepScroll: true }),
+    startWorkout: workout.startWorkout,
+    quickCardio: workout.quickCardio,
+    editWorkout: workout.editWorkout,
   };
   VIEWS[r.name].render(viewEl, ctx);
   if (changed && !keepScroll) { window.scrollTo(0, 0); viewEl.focus({ preventScroll: true }); }
@@ -93,6 +97,7 @@ async function boot() {
   });
   addEventListener('hashchange', () => render());
   render();
+  workout.resumeIfActive();
   registerSW();
   requestPersist();
   for (const f of hooks) f({ state, navigate });

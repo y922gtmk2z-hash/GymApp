@@ -98,3 +98,81 @@ export function recentAverage(series, today, days = 7) {
   const past = series.filter((p) => p.x <= today);
   return past.length ? past[past.length - 1].y : null;
 }
+
+// ---------- Workouts and PRs ----------
+
+/** Bests for one exercise across workouts: {e1rm, kg, repsAt: {kg: reps}} */
+export function exerciseBests(exId, workouts) {
+  const b = { e1rm: 0, kg: 0, repsAt: {}, sessions: 0 };
+  for (const w of workouts) for (const e of w.exercises || []) {
+    if (e.exId !== exId) continue;
+    let any = false;
+    for (const s of e.sets || []) {
+      if (!isWorking(s)) continue;
+      any = true;
+      const kg = s.kg || 0;
+      if (s.reps <= E1RM_MAX_REPS) b.e1rm = Math.max(b.e1rm, epley(kg, s.reps));
+      b.kg = Math.max(b.kg, kg);
+      b.repsAt[kg] = Math.max(b.repsAt[kg] || 0, s.reps);
+    }
+    if (any) b.sessions++;
+  }
+  return b;
+}
+
+/** Most reps ever done at weight >= kg. */
+function bestRepsAtOrAbove(bests, kg) {
+  let r = 0;
+  for (const [w, reps] of Object.entries(bests.repsAt)) if (Number(w) >= kg) r = Math.max(r, reps);
+  return r;
+}
+
+/**
+ * PRs in `workout` compared with `prior` workouts. No PRs for an exercise's first-ever session.
+ * Returns [{exId, type: 'e1rm'|'weight'|'reps', value, kg, reps, previous}]
+ */
+export function detectPRs(workout, prior) {
+  const prs = [];
+  for (const e of workout.exercises || []) {
+    const sets = (e.sets || []).filter(isWorking);
+    if (!sets.length) continue;
+    const before = exerciseBests(e.exId, prior);
+    if (!before.sessions) continue;
+    let bestE = null;
+    for (const s of sets) {
+      if (s.reps > E1RM_MAX_REPS) continue;
+      const v = epley(s.kg || 0, s.reps);
+      if (v > before.e1rm + 1e-9 && (!bestE || v > bestE.value)) bestE = { exId: e.exId, type: 'e1rm', value: v, kg: s.kg, reps: s.reps, previous: before.e1rm };
+    }
+    if (bestE) prs.push(bestE);
+    const heaviest = sets.reduce((a, s) => ((s.kg || 0) > (a.kg || 0) ? s : a), sets[0]);
+    if ((heaviest.kg || 0) > before.kg + 1e-9) prs.push({ exId: e.exId, type: 'weight', value: heaviest.kg, kg: heaviest.kg, reps: heaviest.reps, previous: before.kg });
+    let bestR = null;
+    for (const s of sets) {
+      const prev = bestRepsAtOrAbove(before, s.kg || 0);
+      if (prev > 0 && s.reps > prev && (!bestR || s.reps - prev > bestR.value - bestR.previous)) {
+        bestR = { exId: e.exId, type: 'reps', value: s.reps, kg: s.kg, reps: s.reps, previous: prev };
+      }
+    }
+    if (bestR) prs.push(bestR);
+  }
+  return prs;
+}
+
+/** Recompute PRs for every workout in date order (after an edit or delete). */
+export function recomputeAllPRs(workouts) {
+  const sorted = [...workouts].sort((a, b) => (a.date === b.date ? (a.endedAt || 0) - (b.endedAt || 0) : a.date < b.date ? -1 : 1));
+  const done = [];
+  const out = new Map();
+  for (const w of sorted) {
+    out.set(w.id, detectPRs(w, done));
+    done.push(w);
+  }
+  return workouts.map((w) => ({ ...w, prs: out.get(w.id) || [] }));
+}
+
+export function workoutVolume(w) {
+  let v = 0, sets = 0;
+  for (const e of w.exercises || []) for (const s of e.sets || []) if (isWorking(s)) { v += (s.kg || 0) * s.reps; sets++; }
+  return { volume: v, sets };
+}

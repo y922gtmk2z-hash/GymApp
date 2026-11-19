@@ -35,10 +35,10 @@ export function get() {
 }
 
 /** Mutate state via a function, then persist and notify. */
-export function commit(mutator, { silent = false } = {}) {
+export function commit(mutator, { silent = false, flush = false } = {}) {
   const r = mutator(state);
   if (r && r !== state && typeof r === 'object' && 'version' in r) state = r;
-  persist();
+  if (flush) persist.flush(); else persist();
   if (!silent) for (const f of subs) f(state);
   return state;
 }

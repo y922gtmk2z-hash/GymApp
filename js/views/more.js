@@ -3,6 +3,10 @@ import { makeBackup, parseBackup, summarize } from '../schema.js';
 import { saveFile, pickFile } from '../share.js';
 import * as store from '../store.js';
 import { isPersisted, backend } from '../db.js';
+import { workoutVolume, recomputeAllPRs } from '../stats.js';
+import { fmtWeight, displayWeight } from '../units.js';
+import { fmtDuration } from '../util.js';
+import { exName, actName } from './common.js';
 import { daysBetween, today, isoDate, fmtDate, parseNum, uid, slug } from '../util.js';
 import { allExercises, allActivities, MUSCLES, MUSCLE_LABEL, EQUIPMENT_LABEL, STRENGTH_EQUIPMENT, CARDIO_EQUIPMENT, PATTERNS, LIBRARY, ACTIVITIES } from '../data.js';
 
@@ -51,6 +55,7 @@ function renderLibrary(root, ctx) {
 }
 
 const SECTIONS = [
+  { id: 'workouts', label: 'Workout history', hint: 'Edit or delete past workouts' },
   { id: 'library', label: 'Exercise library', hint: 'Browse exercises and cardio activities' },
   { id: 'profiles', label: 'Equipment profiles', hint: 'Gym, Home and your own setups' },
   { id: 'settings', label: 'Settings', hint: 'Units, theme, rest times' },
@@ -63,7 +68,7 @@ export function render(root, ctx) {
   if (!section) return renderMenu(root, ctx);
   ctx.setTitle(section.label);
   ctx.setActions(h('a.btn.small', { href: '#/more' }, 'Done'));
-  ({ library: renderLibrary, profiles: renderProfiles, settings: renderSettings, backup: renderBackup })[section.id](root, ctx);
+  ({ workouts: renderWorkouts, library: renderLibrary, profiles: renderProfiles, settings: renderSettings, backup: renderBackup })[section.id](root, ctx);
 }
 
 function renderMenu(root, ctx) {
@@ -277,4 +282,47 @@ function editCustomActivity(ctx, existing) {
           close(); toast('Saved');
         } }, 'Save')));
   });
+}
+
+
+// ---------- Workout history ----------
+
+function renderWorkouts(root, ctx) {
+  const st = ctx.state;
+  const list = [...st.workouts].sort((a, b) => (a.date === b.date ? (b.endedAt || 0) - (a.endedAt || 0) : a.date < b.date ? 1 : -1));
+  if (!list.length) {
+    root.append(h('div.empty', h('h3', 'No workouts yet'), h('p.muted', 'Finished workouts appear here.')));
+    return;
+  }
+  const u = st.settings.units;
+  root.append(h('div.card', list.map((w) => {
+    const { volume, sets } = workoutVolume(w);
+    const mins = (w.cardio || []).reduce((a, c) => a + c.minutes, 0);
+    return h('button.list-btn', { type: 'button', onclick: () => workoutSheet(ctx, w.id) },
+      h('span', h('div.ex-name', w.name, w.prs?.length ? h('span.badge.good', { style: { marginLeft: '6px' } }, `${w.prs.length} PR`) : null),
+        h('div.small.muted', [fmtDate(w.date, { weekday: true, year: true }), w.durationSec ? fmtDuration(w.durationSec) : null,
+          sets ? `${sets} sets · ${fmtWeight(volume, u)}` : null, mins ? `${mins} min cardio` : null].filter(Boolean).join(' · '))),
+      h('span.muted', '›'));
+  })));
+}
+
+function workoutSheet(ctx, id) {
+  const st = store.get();
+  const w = st.workouts.find((x) => x.id === id);
+  const u = st.settings.units;
+  sheet(w.name, (close) => h('div.stack',
+    h('div.small.muted', `${fmtDate(w.date, { weekday: true, year: true })}${w.durationSec ? ' · ' + fmtDuration(w.durationSec) : ''}`),
+    w.exercises.map((e) => h('div', h('div.ex-name', exName(st, e.exId)),
+      h('div.small.muted', e.sets.map((s) => `${s.warmup ? 'W ' : ''}${displayWeight(s.kg, u)}×${s.reps}`).join(', ')),
+      e.note ? h('div.small', e.note) : null)),
+    (w.cardio || []).map((c) => h('div', h('div.ex-name', actName(st, c.activityId)),
+      h('div.small.muted', [`${c.minutes} min`, c.distanceKm ? `${c.distanceKm} km` : null, c.avgHr ? `${c.avgHr} bpm` : null, c.intensity].filter(Boolean).join(' · ')))),
+    w.note ? h('p.small', w.note) : null,
+    h('div.row.end',
+      h('button.btn.danger', { type: 'button', onclick: async () => {
+        if (!(await confirmSheet('Delete workout?', 'This can\'t be undone.', { ok: 'Delete', danger: true }))) return;
+        ctx.commit((s) => { s.workouts = recomputeAllPRs(s.workouts.filter((x) => x.id !== id)); });
+        close(); toast('Workout deleted');
+      } }, 'Delete'),
+      h('button.btn.primary', { type: 'button', onclick: () => { close(); ctx.editWorkout(id); } }, 'Edit'))));
 }
