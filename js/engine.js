@@ -42,6 +42,18 @@ export const MAX_SETS_PER_EXERCISE = 4;
 export const MAX_SETS_PER_MUSCLE_SESSION = 12;
 export const WARMUP_SEC = 300;
 export const SEC_PER_SET = 40;
+/** Moving between stations and setting up, per exercise. */
+export const CHANGEOVER_SEC = 60;
+export const MIN_SETS_PER_EXERCISE = 2;
+
+/** Most exercises that make sense in a session of this length (supersets allow two more). */
+export function maxExercises(minutes, supersets = false) {
+  const base = minutes <= 30 ? 4 : minutes <= 45 ? 6 : minutes <= 60 ? 7 : 9;
+  return base + (supersets ? 2 : 0);
+}
+
+/** Opposing muscle groups that pair well in a superset. */
+export const ANTAGONIST = { chest: 'back', back: 'chest', biceps: 'triceps', triceps: 'biceps', quads: 'hamstrings', hamstrings: 'quads', shoulders: 'back', glutes: 'chest', calves: 'core', core: 'calves' };
 
 export const splitType = (key) => key.split('_')[0];
 export function splitName(key) {
@@ -181,9 +193,65 @@ export function pickExercises({ muscle, sets, candidates, appearanceIndex = 0, g
 
 export function estimateSessionSec(session) {
   if (session.kind === 'cardio') return sumCardio(session) * 60;
-  let t = WARMUP_SEC;
-  for (const e of session.exercises || []) t += e.sets * (SEC_PER_SET + e.restSec);
+  const exs = session.exercises || [];
+  let t = WARMUP_SEC + exs.length * CHANGEOVER_SEC;
+  const groups = {};
+  for (const e of exs) {
+    if (e.group) (groups[e.group] ||= []).push(e);
+    else t += e.sets * (SEC_PER_SET + e.restSec);
+  }
+  // Superset: work every set back to back, rest once per round.
+  for (const g of Object.values(groups)) {
+    t += g.reduce((a, e) => a + e.sets * SEC_PER_SET, 0);
+    t += Math.max(...g.map((e) => e.sets)) * Math.max(...g.map((e) => e.restSec));
+  }
   return t + finisherMinutes(session) * 60;
+}
+
+/** Drop group labels that no longer have two members. */
+export function cleanGroups(exercises) {
+  const count = {};
+  for (const e of exercises) if (e.group) count[e.group] = (count[e.group] || 0) + 1;
+  const kept = exercises.map((e) => (e.group && count[e.group] < 2 ? (({ group, ...rest }) => rest)(e) : e));
+  // Relabel in order of appearance: A, B, C...
+  const map = {};
+  let n = 0;
+  return kept.map((e) => (e.group ? { ...e, group: (map[e.group] ||= 'ABCDEFGHIJ'[n++]) } : e));
+}
+
+/**
+ * Pair exercises into supersets: antagonists first, then any two isolations for different muscles.
+ * Strength mode never supersets compounds. Pairs are placed next to each other.
+ */
+export function pairSupersets(exercises, goal) {
+  const list = exercises.map((e) => { const { group, ...rest } = e; return rest; });
+  const canPair = (e) => !(goal === 'strength' && typeOf(e) === 'compound');
+  const paired = new Set();
+  const pairs = [];
+  const tryPair = (match) => {
+    for (let i = 0; i < list.length; i++) {
+      if (paired.has(i) || !canPair(list[i])) continue;
+      for (let j = i + 1; j < list.length; j++) {
+        if (paired.has(j) || !canPair(list[j]) || list[j].muscle === list[i].muscle) continue;
+        if (match(list[i], list[j])) { paired.add(i); paired.add(j); pairs.push([i, j]); break; }
+      }
+    }
+  };
+  tryPair((a, b) => ANTAGONIST[a.muscle] === b.muscle || ANTAGONIST[b.muscle] === a.muscle);
+  tryPair((a, b) => typeOf(a) === 'isolation' && typeOf(b) === 'isolation');
+  const letters = 'ABCDEFGHIJ';
+  pairs.sort((x, y) => x[0] - y[0]);
+  pairs.forEach(([i, j], k) => { list[i].group = letters[k]; list[j].group = letters[k]; });
+  // Reorder: partner directly after the first member.
+  const out = [];
+  const placed = new Set();
+  list.forEach((e, i) => {
+    if (placed.has(i)) return;
+    out.push(e); placed.add(i);
+    const pair = pairs.find((p) => p[0] === i);
+    if (pair) { out.push(list[pair[1]]); placed.add(pair[1]); }
+  });
+  return out;
 }
 
 export const finisherMinutes = (session) => (session.cardio || []).filter((c) => c.finisher).reduce((a, c) => a + c.minutes, 0);
@@ -196,29 +264,46 @@ const TIER = { minimal: 0, maintain: 1, priorityAbove: 2, priority: 3 };
  * floors: {muscle: sets} — Priority muscles above their floor are cut before Priority at floor.
  * Returns { session, trimmed: {muscle: n} }.
  */
-export function fitTimeBudget(session, focus, floors = {}) {
+export function fitTimeBudget(session, focus, floors = {}, { cap = Infinity, offset = 0 } = {}) {
   const s = clone(session);
   const trimmed = {};
   const budget = s.minutes * 60;
   const setsOf = (m) => s.exercises.filter((e) => e.muscle === m).reduce((a, e) => a + e.sets, 0);
-  let guard = 500;
+  const countOf = (m) => s.exercises.filter((e) => e.muscle === m).length;
+  const tierOf = (m) => {
+    const f = focus?.[m] || 'maintain';
+    if (f !== 'priority') return TIER[f];
+    return setsOf(m) > (floors[m] ?? 0) ? TIER.priorityAbove : TIER.priority;
+  };
+  // Rotating tie-break so different sessions drop different muscles.
+  const tie = (m) => (MUSCLES.indexOf(m) + offset) % MUSCLES.length;
+  const removeEx = (e) => {
+    trimmed[e.muscle] = (trimmed[e.muscle] || 0) + e.sets;
+    s.exercises = cleanGroups(s.exercises.filter((x) => x !== e));
+  };
+  const lastOf = (m) => {
+    const exs = s.exercises.filter((e) => e.muscle === m);
+    return [...exs].reverse().find((e) => typeOf(e) === 'isolation') || exs[exs.length - 1];
+  };
+  // 1. Exercise cap: drop whole exercises, preferring muscles that still keep another exercise.
+  let guard = 200;
+  while (s.exercises.length > cap && guard-- > 0) {
+    const muscles = [...new Set(s.exercises.map((e) => e.muscle))];
+    muscles.sort((a, b) => tierOf(a) - tierOf(b) || (countOf(b) > 1) - (countOf(a) > 1) || tie(b) - tie(a));
+    removeEx(lastOf(muscles[0]));
+  }
+  // 2. Time: remove sets, never leaving a one-set exercise behind.
+  guard = 500;
   while (estimateSessionSec(s) > budget && guard-- > 0) {
     const muscles = [...new Set(s.exercises.filter((e) => e.sets > 0).map((e) => e.muscle))];
     if (!muscles.length) break;
-    const tierOf = (m) => {
-      const f = focus?.[m] || 'maintain';
-      if (f !== 'priority') return TIER[f];
-      return setsOf(m) > (floors[m] ?? 0) ? TIER.priorityAbove : TIER.priority;
-    };
     const minTier = Math.min(...muscles.map(tierOf));
     const inTier = muscles.filter((m) => tierOf(m) === minTier);
-    inTier.sort((a, b) => setsOf(b) - setsOf(a) || MUSCLES.indexOf(b) - MUSCLES.indexOf(a));
-    const m = inTier[0];
-    const exs = s.exercises.filter((e) => e.muscle === m && e.sets > 0);
-    const target = [...exs].reverse().find((e) => typeOf(e) === 'isolation') || exs[exs.length - 1];
+    inTier.sort((a, b) => setsOf(b) - setsOf(a) || tie(b) - tie(a));
+    const target = lastOf(inTier[0]);
+    if (target.sets <= MIN_SETS_PER_EXERCISE) { removeEx(target); continue; }
     target.sets -= 1;
-    trimmed[m] = (trimmed[m] || 0) + 1;
-    s.exercises = s.exercises.filter((e) => e.sets > 0);
+    trimmed[target.muscle] = (trimmed[target.muscle] || 0) + 1;
   }
   return { session: s, trimmed };
 }
@@ -246,7 +331,10 @@ export function orderSession(exercises) {
  *         settings, previousPlan?, deload?, weightGoal?, activities?, stepCap? }
  */
 export function buildWeek(args) {
-  const { weekStart, goal, focus, profiles, library, settings = {}, previousPlan = null, deload = false } = args;
+  const { weekStart, goal, focus, profiles, settings = {}, previousPlan = null, deload = false, supersets = false, prefs = {} } = args;
+  const exclude = new Set(prefs.exclude || []);
+  const favourites = prefs.favourite || [];
+  const library = args.library.filter((e) => !exclude.has(e.id));
   const days = [...args.days]
     .map((d) => ({ ...d, date: d.date || dateForWeekday(weekStart, d.weekday) }))
     .sort((a, b) => (a.date < b.date ? -1 : 1));
@@ -285,7 +373,7 @@ export function buildWeek(args) {
       const sets = perSession[i][m];
       if (!sets) continue;
       const appearanceIndex = appearances[m] = (appearances[m] ?? -1) + 1;
-      const preferred = (prev?.exercises || []).filter((e) => e.muscle === m).map((e) => e.exId);
+      const preferred = [...(prev?.exercises || []).filter((e) => e.muscle === m).map((e) => e.exId), ...favourites];
       const { items, unfilled } = pickExercises({ muscle: m, sets, candidates: available, appearanceIndex, goal, settings, used, preferred });
       if (!items.length) warnings.push(`No ${m} exercise available in ${profile.name}`);
       if (unfilled) deficits[m] = (deficits[m] || 0) + unfilled;
@@ -299,9 +387,11 @@ export function buildWeek(args) {
       cardio: fin ? [{ activityId: fin.activityId, minutes: fin.minutes, intensity: 'steady', finisher: true }] : [],
     };
     const floors = priorityFloors(targets, perSession[i], focus);
-    const fitted = fitTimeBudget(session, focus, floors);
+    session.exercises = orderSession(session.exercises);
+    if (supersets) session.exercises = pairSupersets(session.exercises, goal);
+    const fitted = fitTimeBudget(session, focus, floors, { cap: maxExercises(d.minutes, supersets), offset: i * 3 });
     for (const [m, n] of Object.entries(fitted.trimmed)) deficits[m] = (deficits[m] || 0) + n;
-    fitted.session.exercises = orderSession(fitted.session.exercises);
+    fitted.session.exercises = supersets ? cleanGroups(fitted.session.exercises) : orderSession(fitted.session.exercises);
     return fitted.session;
   });
   // Muscles that appear but have no exercises at all: count whole allocation as deficit (already warned).
@@ -309,7 +399,7 @@ export function buildWeek(args) {
   sessions.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.kind === 'lift' ? -1 : 1));
 
   let plan = {
-    weekStart, goal, focus: { ...focus }, deload: false,
+    weekStart, goal, focus: { ...focus }, deload: false, supersets,
     days: days.map((d) => ({ date: d.date, weekday: d.weekday, profileId: d.profileId, minutes: d.minutes, startTime: d.startTime })),
     sessions, warnings: [...new Set(warnings)], deficits,
     cardioTargetMin: cardio ? cardio.target : 0,
@@ -365,7 +455,7 @@ export function swapExercise(plan, sessionId, idx, newEx, settings = {}) {
   return editSession(plan, sessionId, (s, p) => {
     const old = s.exercises[idx];
     const rr = repRest(p.goal, newEx.type, newEx.id, settings);
-    s.exercises[idx] = { exId: newEx.id, muscle: newEx.primary, type: newEx.type, sets: old.sets, ...rr };
+    s.exercises[idx] = { exId: newEx.id, muscle: newEx.primary, type: newEx.type, sets: old.sets, ...rr, ...(old.group ? { group: old.group } : {}) };
     const fitted = fitTimeBudget(s, p.focus, {});
     s.exercises = fitted.session.exercises;
   });
@@ -374,12 +464,12 @@ export function swapExercise(plan, sessionId, idx, newEx, settings = {}) {
 export function setSets(plan, sessionId, idx, sets) {
   return editSession(plan, sessionId, (s) => {
     s.exercises[idx].sets = Math.max(0, Math.min(10, sets));
-    if (s.exercises[idx].sets === 0) s.exercises.splice(idx, 1);
+    if (s.exercises[idx].sets === 0) { s.exercises.splice(idx, 1); s.exercises = cleanGroups(s.exercises); }
   });
 }
 
 export function removeExercise(plan, sessionId, idx) {
-  return editSession(plan, sessionId, (s) => { s.exercises.splice(idx, 1); });
+  return editSession(plan, sessionId, (s) => { s.exercises.splice(idx, 1); s.exercises = cleanGroups(s.exercises); });
 }
 
 export function addExercise(plan, sessionId, ex, sets = 3, settings = {}) {
@@ -473,11 +563,13 @@ export function unskipSession(plan, sessionId) {
 }
 
 /** Same-muscle alternatives available in the profile: same pattern, then listed alternatives, then the rest. */
-export function suggestAlternatives(exId, profile, library) {
+export function suggestAlternatives(exId, profile, library, prefs = {}) {
   const ex = library.find((e) => e.id === exId) || findExercise(exId);
   if (!ex) return [];
-  const cands = availableExercises(library, profile).filter((e) => e.primary === ex.primary && e.id !== exId);
-  const rank = (e) => (e.pattern === ex.pattern ? 0 : ex.alternatives?.includes(e.id) ? 1 : 2);
+  const exclude = new Set(prefs.exclude || []);
+  const fav = new Set(prefs.favourite || []);
+  const cands = availableExercises(library, profile).filter((e) => e.primary === ex.primary && e.id !== exId && !exclude.has(e.id));
+  const rank = (e) => (fav.has(e.id) ? -1 : e.pattern === ex.pattern ? 0 : ex.alternatives?.includes(e.id) ? 1 : 2);
   return cands.map((e, i) => [e, i]).sort((a, b) => rank(a[0]) - rank(b[0]) || a[1] - b[1]).map((x) => x[0]);
 }
 
@@ -592,4 +684,43 @@ export function deloadSuggestion(workouts, today, lastDeloadWeek = null) {
   const stalled = stalledExercises(workouts, today);
   if (stalled.length >= 3) return { reason: 'stalls', exIds: stalled };
   return null;
+}
+
+
+// ---------- What would help ----------
+
+/** Sets planned towards targets, counting each muscle only up to its target maximum. */
+export function targetCoverage(plan) {
+  const t = weeklyTargets(plan.goal, plan.focus);
+  const p = plannedSetsByMuscle(plan);
+  return MUSCLES.reduce((a, m) => a + Math.min(p[m] || 0, t[m].max), 0);
+}
+
+const LENGTHS = [30, 45, 60, 90];
+
+/**
+ * Concrete changes that would fit more of the weekly targets, with the sets each adds.
+ * args are the buildWeek args used for `plan`. Returns [{id, label, gain}] sorted by gain.
+ */
+export function whatWouldHelp(args, plan) {
+  const base = targetCoverage(plan);
+  const out = [];
+  const tryVariant = (id, label, over) => {
+    try {
+      const gain = targetCoverage(buildWeek({ ...args, ...over })) - base;
+      if (gain > 0) out.push({ id, label, gain });
+    } catch { /* invalid variant */ }
+  };
+  const used = new Set(args.days.map((d) => d.weekday));
+  const cardio = new Set((args.weightGoal?.cardioDays || []).map((c) => c.weekday));
+  if (args.days.length < 6) {
+    const free = [1, 2, 3, 4, 5, 6, 7].find((w) => !used.has(w) && !cardio.has(w)) || [1, 2, 3, 4, 5, 6, 7].find((w) => !used.has(w));
+    const tmpl = args.days[args.days.length - 1];
+    if (free) tryVariant('add_day', `Add a ${args.days.length + 1}${['', 'st', 'nd', 'rd'][args.days.length + 1] || 'th'} training day`, { days: [...args.days, { ...tmpl, weekday: free, date: undefined }] });
+  }
+  const minM = Math.min(...args.days.map((d) => d.minutes));
+  const next = LENGTHS.find((l) => l > minM);
+  if (next) tryVariant('longer', `${next}-minute sessions`, { days: args.days.map((d) => ({ ...d, minutes: Math.max(d.minutes, next) })) });
+  if (!args.supersets) tryVariant('supersets', 'Use supersets', { supersets: true });
+  return out.sort((a, b) => b.gain - a.gain);
 }

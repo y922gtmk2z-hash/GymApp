@@ -30,7 +30,8 @@ export function withSampleData(base, today) {
     startKg: 92, targetKg: 84, targetDate: addDays(start, 7 * 20), pacePct: 0.43, baselineSteps: 6000, baselineCardioMin: 30, finishers: true,
     cardioDays: [{ weekday: 2, minutes: 45, profileId: 'home', startTime: '07:00' }, { weekday: 6, minutes: 60, profileId: 'gym', startTime: '09:00' }],
   }, start);
-  s.builder = { goal: 'general', focus: defaultFocus(), days: [1, 3, 5].map((wd) => ({ weekday: wd, profileId: 'gym', minutes: 60, startTime: '18:00' })) };
+  s.onboarded = true;
+  s.builder = { supersets: false, weeks: 1, goal: 'general', focus: defaultFocus(), days: [1, 3, 5].map((wd) => ({ weekday: wd, profileId: 'gym', minutes: 60, startTime: '18:00' })) };
   s.plans = {};
   s.workouts = [];
   s.metrics = [];
@@ -38,7 +39,7 @@ export function withSampleData(base, today) {
   for (let i = 0; i <= weeks; i++) {
     const wk = addDays(start, 7 * i);
     const plan = buildWeek({ weekStart: wk, goal: 'general', focus: s.builder.focus, days: s.builder.days, profiles: s.profiles,
-      library: LIBRARY, activities: ACTIVITIES, settings: s.settings, previousPlan: prev, weightGoal: s.weightGoal });
+      library: LIBRARY, activities: ACTIVITIES, settings: s.settings, previousPlan: prev, weightGoal: s.weightGoal, prefs: s.exercisePrefs });
     s.plans[wk] = plan;
     prev = plan;
     for (const sess of plan.sessions) {

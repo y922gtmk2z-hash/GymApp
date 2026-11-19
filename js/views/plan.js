@@ -91,8 +91,17 @@ function volumeCard(st, plan) {
     card.append(h('div.hr'), h('div.vol-row', h('span', 'Cardio'), bar(c, Math.max(c, plan.cardioTargetMin), { cls: '.cardio', label: 'Cardio minutes' }), h('span.num.small', `${c}/${plan.cardioTargetMin}`)));
   }
   const short = MUSCLES.filter((m) => planned[m] < targets[m].min);
-  if (short.length >= 3) {
-    card.append(h('p.small.muted', 'Your sessions can\'t fit all the targets. Add a day, lengthen sessions, or set some muscles to Minimal.'));
+  if (short.length >= 2) {
+    const args = {
+      weekStart: plan.weekStart, goal: plan.goal, focus: plan.focus, profiles: st.profiles, library: library(st), activities: activities(st),
+      settings: st.settings, supersets: !!plan.supersets, prefs: st.exercisePrefs, weightGoal: st.weightGoal?.active ? st.weightGoal : null,
+      days: plan.days.map((d) => ({ weekday: weekday(d.date), profileId: d.profileId, minutes: d.minutes, startTime: d.startTime })),
+    };
+    const opts = plan.days.length >= 2 ? E.whatWouldHelp(args, plan) : [];
+    card.append(h('div.stack.tight',
+      h('p.small.muted', `${short.length} muscles are below target because the sessions are full.${opts.length ? ' What would help:' : ' Set some muscles to Minimal to make room.'}`),
+      opts.map((o) => h('div.row.between.small', h('span', o.label), h('span.badge.good', `+${o.gain} sets`))),
+      opts.length ? h('button.btn.small', { type: 'button', onclick: () => openBuilder(plan.weekStart) }, 'Change plan') : null));
   }
   return card;
 }
@@ -215,7 +224,7 @@ function openSwap(wk, id, idx, after) {
     const st = store.get();
     const s = st.plans[wk].sessions.find((x) => x.id === id);
     const cur = s.exercises[idx];
-    const alts = E.suggestAlternatives(cur.exId, profileOf(st, s.profileId), library(st));
+    const alts = E.suggestAlternatives(cur.exId, profileOf(st, s.profileId), library(st), st.exercisePrefs);
     if (!alts.length) return h('p.muted', 'No other exercises for this muscle with this profile\'s equipment.');
     return h('div', alts.map((ex) => h('button.list-btn', { type: 'button', onclick: () => {
       updatePlan(wk, (p) => E.swapExercise(p, id, idx, ex, st.settings));
@@ -228,7 +237,8 @@ function openAddExercise(wk, id, after) {
   sheet('Add exercise', (close) => {
     const st = store.get();
     const s = st.plans[wk].sessions.find((x) => x.id === id);
-    const avail = E.availableExercises(library(st), profileOf(st, s.profileId));
+    const excl = new Set(st.exercisePrefs.exclude);
+    const avail = E.availableExercises(library(st), profileOf(st, s.profileId)).filter((e) => !excl.has(e.id));
     let q = '';
     let muscle = '';
     const list = h('div');
@@ -255,7 +265,7 @@ export function rebuildWeek(wk, { deload } = {}) {
   const existing = st.plans[wk];
   const plan = E.buildWeek({
     weekStart: wk, goal: st.builder.goal, focus: st.builder.focus, days: st.builder.days, profiles: st.profiles,
-    library: library(st), activities: activities(st), settings: st.settings,
+    library: library(st), activities: activities(st), settings: st.settings, supersets: !!st.builder.supersets, prefs: st.exercisePrefs,
     previousPlan: existing || st.plans[addDays(wk, -7)] || null,
     deload: deload ?? (!!existing?.deload || st.lastDeloadWeek === wk),
     weightGoal: st.weightGoal?.active ? st.weightGoal : null,
@@ -274,6 +284,7 @@ function draftFrom(st, wk) {
   if (plan) {
     b.goal = plan.goal;
     b.focus = { ...plan.focus };
+    b.supersets = !!plan.supersets;
     b.days = plan.days.map((d) => ({ weekday: weekday(d.date), profileId: d.profileId, minutes: d.minutes, startTime: d.startTime }));
   }
   const g = st.weightGoal;
@@ -345,6 +356,8 @@ export function openBuilder(wk) {
       }),
       h('div.small.muted', `${d.days.length} days selected (2–6).`),
       d.days.map((day) => dayCard(day, true)),
+      h('label.check', h('input', { type: 'checkbox', checked: !!d.supersets, onchange: (e) => { d.supersets = e.target.checked; } }),
+        h('span', 'Use supersets ', h('span.small.muted', '(pair opposing muscles back to back to fit more into short sessions)'))),
       h('div.section-title', 'Weight loss'),
       h('label.check', h('input', { type: 'checkbox', checked: d.wl.on, onchange: (e) => { d.wl.on = e.target.checked; drawAll(); } }), 'Weight-loss phase (exercise only)'),
       d.wl.on ? wlSection() : h('p.small.muted', 'Adds cardio, daily steps and a weight target with weekly check-ins. Exercise only: no food tracking.'),
@@ -429,11 +442,11 @@ export function openBuilder(wk) {
     const previous = existing || st.plans[addDays(wk, -7)] || null;
     const plan = E.buildWeek({
       weekStart: wk, goal: d.goal, focus: d.focus, days: d.days, profiles: st.profiles, library: library(st),
-      activities: activities(st), settings: st.settings, previousPlan: previous, deload: !!existing?.deload || st.lastDeloadWeek === wk,
+      activities: activities(st), settings: st.settings, supersets: !!d.supersets, prefs: st.exercisePrefs, previousPlan: previous, deload: !!existing?.deload || st.lastDeloadWeek === wk,
       weightGoal: goal?.active ? goal : null,
     });
     store.commit((s) => {
-      s.builder = { goal: d.goal, focus: { ...d.focus }, days: clone(d.days) };
+      s.builder = { ...s.builder, goal: d.goal, focus: { ...d.focus }, days: clone(d.days), supersets: !!d.supersets };
       s.weightGoal = goal || null;
       if (newMetric) s.metrics.push(newMetric);
       s.plans[wk] = plan;

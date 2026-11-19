@@ -20,8 +20,8 @@ export const EQUIPMENT_LABEL = {
 
 export function defaultProfiles() {
   return [
-    { id: 'gym', name: 'Gym', builtin: true, equipment: EQUIPMENT.filter((e) => e !== 'outdoors' && e !== 'pool') },
-    { id: 'home', name: 'Home', builtin: true, equipment: ['dumbbell', 'bench', 'bodyweight', 'pullup_bar', 'outdoors'] },
+    { id: 'gym', name: 'Gym', builtin: true, equipment: EQUIPMENT.filter((e) => e !== 'outdoors' && e !== 'pool'), weights: { dumbbellMaxKg: null, kettlebellMaxKg: null } },
+    { id: 'home', name: 'Home', builtin: true, equipment: ['dumbbell', 'bench', 'bodyweight', 'pullup_bar', 'outdoors'], weights: { dumbbellMaxKg: null, kettlebellMaxKg: null } },
   ];
 }
 

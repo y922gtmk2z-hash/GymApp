@@ -2,7 +2,9 @@
 import { MUSCLES, defaultProfiles } from './data.js';
 import { uid } from './util.js';
 
-export const VERSION = 1;
+export const VERSION = 2;
+
+export const DEFAULT_PLATES = [25, 20, 15, 10, 5, 2.5, 1.25];
 
 export function defaultFocus() {
   return Object.fromEntries(MUSCLES.map((m) => [m, 'maintain']));
@@ -20,11 +22,22 @@ export function defaults() {
       alarmMinutes: 30,
       weekStartsOn: 1,
       stepCap: 10000,
+      logEffort: false,
+      autoWarmups: true,
+      barKg: 20,
+      plates: [...DEFAULT_PLATES],
     },
     profiles: defaultProfiles(),
     customExercises: [],
     customActivities: [],
+    exercisePrefs: { exclude: [], favourite: [] },
+    exerciseNotes: {},
+    block: null,
+    milestonesSeen: [],
+    onboarded: false,
     builder: {
+      supersets: false,
+      weeks: 1,
       goal: 'muscle',
       focus: defaultFocus(),
       days: [
@@ -62,6 +75,20 @@ export const MIGRATIONS = {
     }
     return out;
   },
+};
+
+MIGRATIONS[1] = (s) => {
+  const d = defaults();
+  const out = { ...s, version: 2 };
+  out.settings = { ...d.settings, ...s.settings };
+  out.builder = { supersets: false, weeks: 1, ...s.builder };
+  out.exercisePrefs = s.exercisePrefs || { exclude: [], favourite: [] };
+  out.exerciseNotes = s.exerciseNotes || {};
+  out.block = s.block ?? null;
+  out.milestonesSeen = s.milestonesSeen || [];
+  out.onboarded = s.onboarded ?? (Object.keys(s.plans || {}).length > 0 || (s.workouts || []).length > 0);
+  out.profiles = (s.profiles || []).map((p) => ({ weights: { dumbbellMaxKg: null, kettlebellMaxKg: null }, ...p }));
+  return out;
 };
 
 export function migrate(input) {
@@ -129,6 +156,10 @@ export function validate(s) {
     }
   });
   if (!isObj(s.targets)) err('targets must be an object');
+  if (!isObj(s.exercisePrefs) || !Array.isArray(s.exercisePrefs.exclude) || !Array.isArray(s.exercisePrefs.favourite)) err('exercisePrefs must have exclude and favourite lists');
+  if (!isObj(s.exerciseNotes)) err('exerciseNotes must be an object');
+  if (s.block !== null && !isObj(s.block)) err('block must be an object or null');
+  if (s.settings && !Array.isArray(s.settings.plates)) err('settings.plates must be a list');
   if (s.weightGoal !== null && s.weightGoal !== undefined && !isObj(s.weightGoal)) err('weightGoal must be an object or null');
   return errors;
 }

@@ -60,12 +60,20 @@ export function sessionLines(st, s) {
     const c = s.cardio[0];
     return [h('div.row.between', h('span', actName(st, c.activityId)), h('span.muted.num', `${c.minutes} min · ${c.intensity === 'intervals' ? 'intervals' : 'steady'}`))];
   }
-  const rows = s.exercises.map((e) => h('div.row.between.nowrap',
-    h('span.grow', exName(st, e.exId)), h('span.muted.num', `${e.sets} × ${e.repMin}–${e.repMax}`)));
+  const labels = supersetLabels(s.exercises);
+  const rows = s.exercises.map((e, i) => h('div.row.between.nowrap',
+    h('span.grow', labels[i] ? h('span.badge.accent', { style: { marginRight: '6px' }, title: 'Superset' }, labels[i]) : null, exName(st, e.exId)),
+    h('span.muted.num', `${e.sets} × ${e.repMin}–${e.repMax}`)));
   for (const c of (s.cardio || []).filter((x) => x.finisher)) {
     rows.push(h('div.row.between.nowrap', h('span.grow', { style: { color: 'var(--cardio)' } }, `Finisher: ${actName(st, c.activityId)}`), h('span.muted.num', `${c.minutes} min`)));
   }
   return rows;
+}
+
+/** 'A1', 'A2'... for superset members, null otherwise. */
+export function supersetLabels(exercises) {
+  const seen = {};
+  return exercises.map((e) => (e.group ? `${e.group}${(seen[e.group] = (seen[e.group] || 0) + 1)}` : null));
 }
 
 export function dayLabel(date, today) {
