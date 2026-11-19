@@ -58,3 +58,10 @@ test('refuses backups from a newer version', () => {
   assert.equal(r.ok, false);
   assert.match(r.errors[0], /newer/);
 });
+
+test('sample data is a valid state', async () => {
+  const { withSampleData } = await import('../js/sample.js');
+  const s = withSampleData(defaults(), '2026-11-19');
+  assert.deepEqual(validate(s), []);
+  assert.ok(s.workouts.length > 30 && s.metrics.length > 30 && s.weightGoal.active);
+});

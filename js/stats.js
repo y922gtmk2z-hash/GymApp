@@ -176,3 +176,57 @@ export function workoutVolume(w) {
   for (const e of w.exercises || []) for (const s of e.sets || []) if (isWorking(s)) { v += (s.kg || 0) * s.reps; sets++; }
   return { volume: v, sets };
 }
+
+// ---------- Weekly aggregates ----------
+
+/** Direct working sets per muscle per week: {weekStart: {muscle: sets}}. exMuscle(id) -> muscle. */
+export function weeklySetsByMuscle(workouts, exMuscle) {
+  const out = {};
+  for (const w of workouts) {
+    const wk = weekOf(w.date);
+    for (const e of w.exercises || []) {
+      const m = exMuscle(e.exId);
+      if (!m) continue;
+      const n = (e.sets || []).filter(isWorking).length;
+      if (!n) continue;
+      out[wk] ||= {};
+      out[wk][m] = (out[wk][m] || 0) + n;
+    }
+  }
+  return out;
+}
+
+export function sessionsByWeek(workouts) {
+  const out = {};
+  for (const w of workouts) { const wk = weekOf(w.date); out[wk] = (out[wk] || 0) + 1; }
+  return out;
+}
+
+export function volumeByWeek(workouts) {
+  const out = {};
+  for (const w of workouts) {
+    const wk = weekOf(w.date);
+    out[wk] = (out[wk] || 0) + workoutVolume(w).volume;
+  }
+  return out;
+}
+
+/** List of week starts from `from` to `to` inclusive. */
+export function weeksBetween(from, to) {
+  const out = [];
+  for (let w = weekOf(from); w <= to; w = addDays(w, 7)) out.push(w);
+  return out;
+}
+
+/** Mean of a metric over [from, to], or null. */
+export function meanInWindow(metrics, key, from, to) {
+  const v = metrics.filter((m) => m.date >= from && m.date <= to && Number.isFinite(m[key])).map((m) => m[key]);
+  return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+}
+
+/** Change in a metric's 7-day mean vs the previous 7 days, ending today. */
+export function weekOverWeek(metrics, key, today) {
+  const cur = meanInWindow(metrics, key, addDays(today, -6), today);
+  const prev = meanInWindow(metrics, key, addDays(today, -13), addDays(today, -7));
+  return { cur, prev, delta: cur !== null && prev !== null ? cur - prev : null };
+}

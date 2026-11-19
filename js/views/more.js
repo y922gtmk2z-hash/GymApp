@@ -7,6 +7,8 @@ import { workoutVolume, recomputeAllPRs } from '../stats.js';
 import { fmtWeight, displayWeight } from '../units.js';
 import { fmtDuration } from '../util.js';
 import { exName, actName } from './common.js';
+import { withSampleData } from '../sample.js';
+import { defaults } from '../schema.js';
 import { daysBetween, today, isoDate, fmtDate, parseNum, uid, slug } from '../util.js';
 import { allExercises, allActivities, MUSCLES, MUSCLE_LABEL, EQUIPMENT_LABEL, STRENGTH_EQUIPMENT, CARDIO_EQUIPMENT, PATTERNS, LIBRARY, ACTIVITIES } from '../data.js';
 
@@ -107,6 +109,18 @@ function renderSettings(root, ctx) {
       field('Calendar alert (minutes before)', numInput({ value: s.alarmMinutes, decimal: false,
         onInput: (v) => { const n = parseNum(v); if (n !== null && n >= 0) ctx.commit((st) => { st.settings.alarmMinutes = Math.round(n); }, { silent: true }); } })),
     ),
+    h('div.card.flat',
+      h('h3', 'Try it out'),
+      h('p.small.muted', 'Fill the app with 12 weeks of example training, check-ins and a weight-loss phase. This replaces your data, so export a backup first.'),
+      h('div.row',
+        h('button.btn.small', { type: 'button', onclick: async () => {
+          if (!(await confirmSheet('Load sample data?', 'All current data on this device will be replaced.', { ok: 'Load', danger: true }))) return;
+          store.replace(withSampleData(defaults(), today())); toast('Sample data loaded');
+        } }, 'Load sample data'),
+        h('button.btn.small.danger', { type: 'button', onclick: async () => {
+          if (!(await confirmSheet('Erase all data?', 'Everything on this device will be deleted. This can\'t be undone.', { ok: 'Erase', danger: true }))) return;
+          store.replace(defaults()); toast('All data erased');
+        } }, 'Erase all data'))),
   ));
 }
 

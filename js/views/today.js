@@ -1,6 +1,10 @@
 // Today tab: today's planned session, week strip, upcoming sessions.
-import { h, empty } from '../ui.js';
-import { today as todayFn, weekStart, addDays, fmtDate } from '../util.js';
+import { h, empty, bar } from '../ui.js';
+import { today as todayFn, weekStart, addDays, fmtDate, daysBetween, round } from '../util.js';
+import * as S from '../stats.js';
+import * as W from '../weight.js';
+import { fmtWeight, fromKg } from '../units.js';
+import { checkInSheet } from './progress.js';
 import { planFor, weekStrip, sessionLines, profileOf, sessionMinutes, workoutForSession, dayLabel } from './common.js';
 
 /** Extra cards other modules add (summary, banners). Each: (ctx, {today, wk}) => Node|null */
@@ -16,6 +20,8 @@ export function render(root, ctx) {
   root.append(stack);
 
   for (const f of extras.top) { const n = f(ctx, { today, wk }); if (n) stack.append(n); }
+  const nudge = weighInNudge(st, today);
+  if (nudge) stack.append(nudge);
 
   stack.append(h('div.card', h('div.card-head', h('h3', 'This week'), h('a.small', { href: '#/plan' }, plan ? 'Plan' : 'Build plan')), weekStrip(st, wk, today)));
 
@@ -49,7 +55,53 @@ export function render(root, ctx) {
       h('a.btn.small', { href: '#/plan/' + addDays(wk, 7) }, 'Plan next week')));
   }
 
+  stack.append(summaryCard(st, plan, today, wk));
   for (const f of extras.bottom) { const n = f(ctx, { today, wk }); if (n) stack.append(n); }
+}
+
+function weighInNudge(st, today) {
+  if (!st.weightGoal?.active) return null;
+  const s = S.metricSeries(st.metrics, 'weightKg');
+  const last = s[s.length - 1];
+  if (last && daysBetween(last.x, today) < 3) return null;
+  return h('div.banner.info', h('strong', 'Time for a weigh-in'),
+    h('span.small', last ? `Last weigh-in ${fmtDate(last.x)}. The trend needs 3 or more a week.` : 'Log your weight to start the trend.'),
+    h('button.btn.small', { type: 'button', onclick: () => checkInSheet() }, 'Check in'));
+}
+
+function summaryCard(st, plan, today, wk) {
+  const units = st.settings.units;
+  const weekW = st.workouts.filter((w) => w.date >= wk && w.date <= addDays(wk, 6));
+  const planned = (plan?.sessions || []).filter((s) => !s.skipped);
+  const done = planned.filter((s) => weekW.some((w) => w.sessionId === s.id)).length + weekW.filter((w) => !w.sessionId).length;
+  const prs = weekW.reduce((a, w) => a + (w.prs?.length || 0), 0);
+  const wt = S.weekOverWeek(st.metrics, 'weightKg', today);
+  const rhr = S.weekOverWeek(st.metrics, 'restingHr', today);
+  const delta = (d, f) => (d === null ? '–' : `${d > 0 ? '+' : d < 0 ? '−' : '±'}${f(Math.abs(d))}`);
+  const tiles = [
+    h('div.tile', h('div.v', plan ? `${done}/${planned.length}` : String(done)), h('div.l', 'Sessions')),
+    h('div.tile', h('div.v', String(prs)), h('div.l', 'PRs')),
+    h('div.tile', h('div.v', delta(wt.delta, (v) => `${round(fromKg(v, units), 1)} ${units}`)), h('div.l', 'Weight vs last week')),
+    h('div.tile', h('div.v', delta(rhr.delta, (v) => `${Math.round(v)}`)), h('div.l', 'Resting HR vs last week')),
+  ];
+  const card = h('div.card', h('h3', 'Weekly summary'), h('div.tiles', tiles));
+  if (plan?.cardioTargetMin || st.weightGoal?.active) {
+    const mins = S.cardioMinutes(st.workouts, wk, addDays(wk, 6));
+    const target = plan?.cardioTargetMin || 0;
+    card.append(h('div.vol-row', h('span', 'Cardio'), bar(mins, Math.max(target, mins, 1), { cls: '.cardio', label: 'Cardio minutes this week' }), h('span.num.small', `${mins}/${target} min`)));
+    const steps = st.metrics.filter((m) => Number.isFinite(m.stepsAvg)).sort((a, b) => (a.date < b.date ? 1 : -1))[0];
+    const stepT = plan?.stepTarget || st.weightGoal?.levels?.steps;
+    if (stepT) card.append(h('div.vol-row', h('span', 'Steps/day'), bar(steps?.stepsAvg || 0, stepT, { cls: steps && steps.stepsAvg >= stepT ? '.good' : '', label: 'Average daily steps' }),
+      h('span.num.small', `${steps ? Math.round(steps.stepsAvg / 100) / 10 + 'k' : '–'}/${stepT / 1000}k`)));
+  }
+  if (st.weightGoal?.active) {
+    const g = st.weightGoal;
+    const avg7 = S.recentAverage(S.metricSeries(st.metrics, 'weightKg'), today, 7);
+    const pct = W.progressPct(g, avg7);
+    card.append(h('div.hr'), h('div.row.between', h('span.small', `Weight goal: ${avg7 !== null ? fmtWeight(avg7, units) : '–'} → ${fmtWeight(g.targetKg, units)}`), h('a.small', { href: '#/progress' }, `${Math.round(pct)}%`)),
+      bar(pct, 100, { cls: '.good', label: 'Progress to weight target' }));
+  }
+  return card;
 }
 
 function sessionCard(ctx, s, today) {
