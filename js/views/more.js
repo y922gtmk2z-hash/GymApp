@@ -3,7 +3,7 @@ import { makeBackup, parseBackup, summarize } from '../schema.js';
 import { saveFile, pickFile } from '../share.js';
 import * as store from '../store.js';
 import { isPersisted, backend } from '../db.js';
-import { workoutVolume, recomputeAllPRs } from '../stats.js';
+import { workoutVolume, recomputeAllPRs, bestPRsByLift } from '../stats.js';
 import { fmtWeight, displayWeight } from '../units.js';
 import { fmtDuration } from '../util.js';
 import { exName, actName } from './common.js';
@@ -334,7 +334,7 @@ function renderWorkouts(root, ctx) {
     const { volume, sets } = workoutVolume(w);
     const mins = (w.cardio || []).reduce((a, c) => a + c.minutes, 0);
     return h('button.list-btn', { type: 'button', onclick: () => workoutSheet(ctx, w.id) },
-      h('span', h('div.ex-name', w.name, w.prs?.length ? h('span.badge.good', { style: { marginLeft: '6px' } }, `${w.prs.length} PR`) : null),
+      h('span', h('div.ex-name', w.name, bestPRsByLift(w.prs).length ? h('span.badge.good', { style: { marginLeft: '6px' } }, `${bestPRsByLift(w.prs).length} PR`) : null),
         h('div.small.muted', [fmtDate(w.date, { weekday: true, year: true }), w.durationSec ? fmtDuration(w.durationSec) : null,
           sets ? `${sets} sets · ${fmtWeight(volume, u)}` : null, mins ? `${mins} min cardio` : null].filter(Boolean).join(' · '))),
       h('span.muted', '›'));

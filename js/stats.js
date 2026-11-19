@@ -244,3 +244,23 @@ export function bestPRsByLift(prs = []) {
 
 /** Number of distinct lifts with a PR across workouts. */
 export const liftsWithPRs = (workouts) => workouts.reduce((a, w) => a + bestPRsByLift(w.prs).length, 0);
+
+/** True when an exercise is logged without added load (bodyweight work). */
+export function isBodyweightOnly(exId, workouts) {
+  let any = false;
+  for (const w of workouts) for (const e of w.exercises || []) {
+    if (e.exId !== exId) continue;
+    for (const s of e.sets || []) if (isWorking(s)) { any = true; if ((s.kg || 0) > 0) return false; }
+  }
+  return any;
+}
+
+/** Best reps in a single working set, per workout date: [{x, y}]. */
+export function repsSeries(exId, workouts) {
+  const byDate = {};
+  for (const w of workouts) for (const e of w.exercises || []) {
+    if (e.exId !== exId) continue;
+    for (const s of e.sets || []) if (isWorking(s)) byDate[w.date] = Math.max(byDate[w.date] || 0, s.reps);
+  }
+  return Object.entries(byDate).sort(([a], [b]) => (a < b ? -1 : 1)).map(([x, y]) => ({ x, y }));
+}

@@ -56,9 +56,16 @@ export function render(root, ctx) {
 
 const goalLabel = (g) => ({ muscle: 'Muscle', strength: 'Strength', general: 'General' })[g] || g;
 
+const expanded = new Set();
+
 function sessionCard(st, plan, s, today, ctx) {
   const done = workoutForSession(st, s.id);
   const est = sessionMinutes(s);
+  const open = s.kind === 'cardio' || expanded.has(s.id) || (s.date === today && !done);
+  const finisher = (s.cardio || []).find((c) => c.finisher);
+  const summary = h('button.btn.ghost.small', { type: 'button', 'aria-expanded': 'false', style: { justifyContent: 'space-between', padding: 0 },
+    onclick: () => { expanded.add(s.id); ctx.rerender(); } },
+    h('span', `${s.exercises.length} exercises${s.exercises.some((e) => e.group) ? ' · supersets' : ''}${finisher ? ` · ${finisher.minutes} min finisher` : ''}`), h('span.muted', 'Show ▾'));
   const head = h('div.card-head',
     h('div', h('div.small.muted', dayLabel(s.date, today) + (s.startTime ? ` · ${s.startTime}` : '')),
       h('h3', s.name, ' ', h('span.badge', profileOf(st, s.profileId).name))),
@@ -71,8 +78,10 @@ function sessionCard(st, plan, s, today, ctx) {
       ? h('button.btn.small', { type: 'button', onclick: () => updatePlan(plan.weekStart, (p) => E.unskipSession(p, s.id)) }, 'Unskip')
       : h('button.btn.small', { type: 'button', onclick: () => doSkip(plan.weekStart, s.id) }, 'Skip')) : null,
     !done && !s.skipped && s.date <= today && ctx.startWorkout ? h('button.btn.small.primary', { type: 'button', onclick: () => ctx.startWorkout(s.id) }, 'Start') : null);
+  const lines = open ? h('div.stack.tight.small', sessionLines(st, s),
+    s.kind !== 'cardio' && expanded.has(s.id) ? h('button.btn.ghost.small', { type: 'button', 'aria-expanded': 'true', style: { padding: 0, alignSelf: 'flex-start' }, onclick: () => { expanded.delete(s.id); ctx.rerender(); } }, 'Hide ▴') : null) : summary;
   return h('div.card', { class: [s.kind === 'cardio' ? 'cardio' : '', s.skipped ? 'skipped' : ''].join(' ') },
-    head, h('div.stack.tight.small', sessionLines(st, s)), actions);
+    head, lines, actions);
 }
 
 function volumeCard(st, plan) {
@@ -112,13 +121,34 @@ function updatePlan(wk, fn) {
   store.commit((st) => {
     const r = fn(st.plans[wk], st);
     if (r) st.plans[wk] = r;
+    st.plans[wk].edited = true;
   });
+}
+
+/** Keep sessions that already have a logged workout when a week is rebuilt. */
+export function keepFinished(oldPlan, newPlan, st) {
+  if (!oldPlan) return newPlan;
+  const done = oldPlan.sessions.filter((s) => st.workouts.some((w) => w.sessionId === s.id));
+  if (!done.length) return newPlan;
+  const sessions = newPlan.sessions.filter((s) => !done.some((d) => d.id === s.id || (d.date === s.date && d.kind === s.kind)));
+  sessions.push(...done);
+  sessions.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.kind === 'lift' ? -1 : 1));
+  return { ...newPlan, sessions };
+}
+
+/** True if rebuilding would lose something: edits or finished sessions. */
+export function rebuildRisk(st, wk) {
+  const p = st.plans[wk];
+  if (!p) return null;
+  const done = p.sessions.filter((s) => st.workouts.some((w) => w.sessionId === s.id)).length;
+  if (!p.edited && !done) return null;
+  return [p.edited ? 'your edits to this week (swaps, sets, moves and skips)' : null, done ? `${done} finished session${done > 1 ? 's' : ''} will be kept as logged` : null].filter(Boolean);
 }
 
 function doSkip(wk, id) {
   const st = store.get();
   const { plan, moved, lost } = E.skipSession(st.plans[wk], id, todayFn());
-  store.commit((s) => { s.plans[wk] = plan; });
+  store.commit((s) => { s.plans[wk] = { ...plan, edited: true }; });
   const m = Object.values(moved).reduce((a, b) => a + b, 0);
   const l = Object.entries(lost).filter(([, n]) => n > 0);
   const lostN = l.reduce((a, [, n]) => a + n, 0);
@@ -150,9 +180,9 @@ function openMove(wk, id) {
         const other = plan.sessions.find((x) => x.date === date && x.id !== id && x.kind === s.kind && !x.skipped);
         return h('button.list-btn', { type: 'button', disabled: date === s.date, onclick: async () => {
           const r = E.moveSession(plan, id, date);
-          if (r.ok) { store.commit((x) => { x.plans[wk] = r.plan; }); close(); return; }
+          if (r.ok) { store.commit((x) => { x.plans[wk] = { ...r.plan, edited: true }; }); close(); return; }
           const ok = await confirmSheet('Swap days?', `${other.name} is already on ${fmtDate(date, { weekday: true })}. Swap the two sessions?`, { ok: 'Swap' });
-          if (ok) { store.commit((x) => { x.plans[wk] = E.swapSessionDates(plan, id, r.conflictId); }); close(); }
+          if (ok) { store.commit((x) => { x.plans[wk] = { ...E.swapSessionDates(plan, id, r.conflictId), edited: true }; }); close(); }
         } }, h('span', fmtDate(date, { weekday: true })), h('span.small.muted', date === s.date ? 'current' : other ? other.name : ''));
       }));
   });
@@ -270,8 +300,9 @@ export function rebuildWeek(wk, { deload } = {}) {
     deload: deload ?? (!!existing?.deload || st.lastDeloadWeek === wk),
     weightGoal: st.weightGoal?.active ? st.weightGoal : null,
   });
-  store.commit((s) => { s.plans[wk] = plan; });
-  return plan;
+  const kept = keepFinished(existing, plan, st);
+  store.commit((s) => { s.plans[wk] = kept; });
+  return kept;
 }
 
 // ---------- Builder ----------
@@ -338,7 +369,9 @@ export function openBuilder(wk) {
         options: [{ value: 'muscle', label: 'Muscle' }, { value: 'strength', label: 'Strength' }, { value: 'general', label: 'General' }],
         onChange: (v) => { d.goal = v; } })),
       h('div.section-title', 'Focus per muscle'),
-      h('div.stack.tight', MUSCLES.map((m) => h('div.row.between.nowrap', h('span', { style: { minWidth: '6.5em' } }, MUSCLE_LABEL[m]),
+      h('button.btn.small', { type: 'button', 'aria-expanded': String(!!d.showFocus), onclick: () => { d.showFocus = !d.showFocus; drawAll(); } },
+        d.showFocus ? 'Hide muscles' : `Customise muscles (${focusSummary(d.focus)})`),
+      !d.showFocus ? null : h('div.stack.tight', MUSCLES.map((m) => h('div.row.between.nowrap', h('span', { style: { minWidth: '6.5em' } }, MUSCLE_LABEL[m]),
         h('div.grow', segmented({ small: true, label: `${MUSCLE_LABEL[m]} focus`, value: d.focus[m] || 'maintain',
           options: [{ value: 'priority', label: 'Priority' }, { value: 'maintain', label: 'Maintain' }, { value: 'minimal', label: 'Minimal' }],
           onChange: (v) => { d.focus[m] = v; } }))))),
@@ -413,8 +446,13 @@ export function openBuilder(wk) {
       } }, 'End phase') : null);
   }
 
-  function generate() {
+  async function generate() {
     errorBox.replaceChildren();
+    const risk = rebuildRisk(store.get(), wk);
+    if (risk) {
+      const ok = await confirmSheet('Rebuild this week?', `Rebuilding replaces ${risk.join('; ')}.`, { ok: 'Rebuild' });
+      if (!ok) return;
+    }
     const err = (m) => { errorBox.append(h('div.banner.warn', h('span.small', m))); errorBox.scrollIntoView?.({ block: 'center' }); };
     if (d.days.length < 2 || d.days.length > 6) return err('Pick between 2 and 6 training days.');
     const st = store.get();
@@ -449,7 +487,7 @@ export function openBuilder(wk) {
       s.builder = { ...s.builder, goal: d.goal, focus: { ...d.focus }, days: clone(d.days), supersets: !!d.supersets };
       s.weightGoal = goal || null;
       if (newMetric) s.metrics.push(newMetric);
-      s.plans[wk] = plan;
+      s.plans[wk] = keepFinished(existing, plan, s);
     });
     closeSheet();
     toast('Plan built');
@@ -457,6 +495,13 @@ export function openBuilder(wk) {
 
   drawAll();
   const closeSheet = sheet(`Build week of ${fmtDate(wk)}`, body);
+}
+
+function focusSummary(focus) {
+  const pri = MUSCLES.filter((m) => focus[m] === 'priority').map((m) => MUSCLE_LABEL[m]);
+  const min = MUSCLES.filter((m) => focus[m] === 'minimal').map((m) => MUSCLE_LABEL[m]);
+  if (!pri.length && !min.length) return 'all Maintain';
+  return [pri.length ? `Priority: ${pri.join(', ')}` : null, min.length ? `Minimal: ${min.join(', ')}` : null].filter(Boolean).join(' · ');
 }
 
 function dayChips(selected, onToggle, disabled = []) {

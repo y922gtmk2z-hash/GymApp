@@ -360,3 +360,9 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); outline
 #resume .btn { background: var(--accent-ink); color: var(--accent); border-color: transparent; }
 body.has-resume main { padding-bottom: calc(var(--tabbar-h) + var(--sab) + 90px); }
 body.has-resume #toast { bottom: calc(var(--tabbar-h) + var(--sab) + 76px); }
+
+/* Touch targets: at least 44px for every control. */
+.btn.small { min-height: 44px; }
+.btn.icon.small { width: 44px; }
+.chip { min-height: 44px; }
+.segmented.small button { min-height: 40px; }
