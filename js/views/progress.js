@@ -130,9 +130,7 @@ function renderBody(stack, ctx) {
   const startVal = pts[0] ? fromDisplay(def, pts[0].y, units) : null;
   const curVal = def.key === 'weightKg' ? S.recentAverage(series, today, 7) : latest?.y ?? null;
   stack.append(h('div.card',
-    h('div.card-head',
-      h('select', { 'aria-label': 'Metric', style: { width: 'auto', flex: 1 }, onchange: (e) => { ui.metric = e.target.value; ctx.rerender(); } },
-        METRICS.map((m) => h('option', { value: m.key, selected: m.key === def.key }, m.label + (m.appOnly ? ' (app only)' : ''))))),
+    metricChips(ctx, def),
     h('div.row.between', h('div', h('div.tile', { style: { padding: 0, background: 'none' } }, h('div.v', fmtMetric(def, curVal, units)), h('div.l', def.key === 'weightKg' ? '7-day average' : latest ? `Latest · ${fmtDate(latest.x)}` : 'No entries')))),
     chartBox(chart, { legend: leg.length ? legend(leg) : null }),
     targetBlock(ctx, 'metric:' + def.key, { start: startVal, current: curVal, def, label: def.label, fmt: (v) => fmtMetric(def, v, units) })));
@@ -149,6 +147,17 @@ function renderBody(stack, ctx) {
     h('span', h('div.ex-name', fmtDate(m.date, { weekday: true, year: true })),
       h('div.small.muted', METRICS.filter((d) => Number.isFinite(m[d.key])).map((d) => `${d.label.split(' (')[0]} ${fmtMetric(d, m[d.key], units)}`).join(' · '))),
     h('span.muted', '›'))), entries.length > 12 ? h('p.tiny.muted', `${entries.length - 12} older entries not shown.`) : null));
+}
+
+function metricChips(ctx, def) {
+  const st = ctx.state;
+  const logged = METRICS.filter((m) => m.key === 'weightKg' || st.metrics.some((x) => Number.isFinite(x[m.key])));
+  const short = { weightKg: 'Weight', restingHr: 'Resting HR', waistCm: 'Waist', stepsAvg: 'Steps', hrvMs: 'HRV', vo2max: 'VO₂ max', sleepHrs: 'Sleep', bodyFatPct: 'Body fat' };
+  const chipList = logged.slice(0, 6);
+  return h('div.stack.tight',
+    h('div.row', { role: 'group', 'aria-label': 'Metric' }, chipList.map((m) => h('button.chip', { type: 'button', 'aria-pressed': String(m.key === def.key), onclick: () => { ui.metric = m.key; ctx.rerender(); } }, short[m.key] || m.label))),
+    h('select', { 'aria-label': 'All metrics', onchange: (e) => { ui.metric = e.target.value; ctx.rerender(); } },
+      METRICS.map((m) => h('option', { value: m.key, selected: m.key === def.key }, m.label + (m.appOnly ? ' (app only)' : '')))));
 }
 
 function goalCard(ctx) {
@@ -181,6 +190,7 @@ export function checkInSheet(id = null) {
   const existing = id ? st.metrics.find((m) => m.id === id) : null;
   const d = existing ? { ...existing } : { date: todayFn() };
   const showSteps = st.weightGoal?.active;
+  const prevEntry = [...st.metrics].sort((a, b) => (a.date < b.date ? 1 : -1))[0] || null;
   let more = !!existing && METRICS.some((m) => !m.core && m.key !== 'stepsAvg' && Number.isFinite(existing[m.key]));
   const body = h('div.stack');
   const input = (def) => field(`${def.label} (${unitOf(def, units)})${def.appOnly ? ' · app only' : ''}`,
@@ -192,7 +202,12 @@ export function checkInSheet(id = null) {
       METRICS.filter((m) => m.core).map(input),
       showSteps ? input(metricDef('stepsAvg')) : null,
       st.weightGoal?.active ? h('p.tiny.muted', 'Weigh in 3 or more times a week, same time of day, for a reliable trend.') : null,
-      h('button.btn.small', { type: 'button', onclick: () => { more = !more; draw(close); } }, more ? 'Fewer fields' : 'More fields (Apple Health and tape)'),
+      h('div.row',
+        h('button.btn.small', { type: 'button', onclick: () => { more = !more; draw(close); } }, more ? 'Fewer fields' : 'More fields (Apple Health and tape)'),
+        !existing && prevEntry ? h('button.btn.small', { type: 'button', onclick: () => {
+          for (const m of METRICS) if (m.key !== 'weightKg' && Number.isFinite(prevEntry[m.key]) && !Number.isFinite(d[m.key])) d[m.key] = prevEntry[m.key];
+          more = true; draw(close); toast('Filled from your last check-in. Change anything that\'s different.');
+        } }, 'Same as last time') : null),
       more ? METRICS.filter((m) => !m.core && (m.key !== 'stepsAvg' || !showSteps)).map(input) : null,
       h('div.row.end',
         existing ? h('button.btn.danger', { type: 'button', onclick: async () => {
@@ -228,13 +243,14 @@ function renderLifts(stack, ctx) {
   const st = ctx.state;
   const units = st.settings.units;
   const today = todayFn();
-  const ids = [...new Set(st.workouts.flatMap((w) => (w.exercises || []).filter((e) => S.entryE1rm(e) > 0).map((e) => e.exId)))];
+  const ids = [...new Set(st.workouts.flatMap((w) => (w.exercises || []).filter((e) => S.entryE1rm(e) > 0 || (e.sets || []).some(S.isWorking)).map((e) => e.exId)))];
   if (!ids.length) {
     stack.append(h('div.card', empty('No lifts yet', 'Finish a workout and your estimated 1RM and PRs show up here.')));
     return;
   }
   ids.sort((a, b) => exName(st, a).localeCompare(exName(st, b)));
   if (!ui.lift || !ids.includes(ui.lift)) ui.lift = ids[0];
+  if (S.isBodyweightOnly(ui.lift, st.workouts)) { renderRepsLift(stack, ctx, ids); return; }
   const series = S.e1rmSeries(ui.lift, st.workouts);
   const from = C.rangeStart(ui.range, today, series[0]?.x);
   const pts = C.filterRange(series, from, today).map((p) => ({ x: p.x, y: fromKg(p.y, units) }));
@@ -256,6 +272,25 @@ function renderLifts(stack, ctx) {
   stack.append(h('div.card', prs.length ? prs.slice(0, 20).map((p) => h('div.row.between', { style: { padding: '6px 0' } },
     h('span.small', p.type === 'e1rm' ? `Est. 1RM ${fmtWeight(p.value, units)}` : p.type === 'weight' ? `Heaviest ${fmtWeight(p.kg, units)} × ${p.reps}` : `${p.reps} reps at ${fmtWeight(p.kg, units)}`),
     h('span.small.muted', fmtDate(p.date, { year: true })))) : h('p.small.muted', 'No PRs yet. Your first session sets the baseline.')));
+}
+
+function renderRepsLift(stack, ctx, ids) {
+  const st = ctx.state;
+  const today = todayFn();
+  const series = S.repsSeries(ui.lift, st.workouts);
+  const from = C.rangeStart(ui.range, today, series[0]?.x);
+  const pts = C.filterRange(series, from, today);
+  const key = `lift:${ui.lift}:reps`;
+  const target = st.targets[key];
+  const best = Math.max(0, ...series.map((p) => p.y));
+  stack.append(h('div.card',
+    h('select', { 'aria-label': 'Exercise', onchange: (e) => { ui.lift = e.target.value; ctx.rerender(); } }, ids.map((id) => h('option', { value: id, selected: id === ui.lift }, exName(st, id)))),
+    h('div.tiles',
+      h('div.tile', h('div.v', String(best)), h('div.l', 'Best reps in a set')),
+      h('div.tile', h('div.v', String(series.length)), h('div.l', 'Sessions'))),
+    h('div.small.muted', 'Bodyweight exercise: progress is shown as your best set each session.'),
+    chartBox(C.lineChart({ series: [{ points: pts, cls: 's0', dots: true }], target: target ?? null, from, to: today, fmt: (v) => String(Math.round(v)), title: 'Best reps chart' })),
+    targetBlock(ctx, key, { start: series[0]?.y ?? null, current: series[series.length - 1]?.y ?? null, def: { unit: 'reps' }, label: 'Reps', fmt: (v) => `${v} reps` })));
 }
 
 // ---------- Training volume ----------

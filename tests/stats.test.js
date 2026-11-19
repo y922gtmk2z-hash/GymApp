@@ -81,3 +81,10 @@ test('PRs count once per lift', () => {
   assert.deepEqual(S.bestPRsByLift(prs).map((p) => [p.exId, p.type]), [['a', 'e1rm'], ['b', 'weight']]);
   assert.equal(S.liftsWithPRs([{ prs }, { prs: [] }, {}]), 2);
 });
+
+test('bodyweight exercises chart best reps', () => {
+  const ws = [W('1', '2026-11-01', 'pushup', [[0, 12], [0, 15]]), W('2', '2026-11-04', 'pushup', [[0, 18]]), W('3', '2026-11-04', 'bench', [[60, 5]])];
+  assert.equal(S.isBodyweightOnly('pushup', ws), true);
+  assert.equal(S.isBodyweightOnly('bench', ws), false);
+  assert.deepEqual(S.repsSeries('pushup', ws), [{ x: '2026-11-01', y: 15 }, { x: '2026-11-04', y: 18 }]);
+});
