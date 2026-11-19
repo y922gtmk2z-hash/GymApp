@@ -75,3 +75,9 @@ test('ACCEPTANCE: timer stays accurate across a 60 s screen lock (timestamp base
   assert.equal(T.remaining(t, 60000), 60);
   assert.equal(T.isOver(T.startTimer(45, null, 0), 60000), true);
 });
+
+test('PRs count once per lift', () => {
+  const prs = [{ exId: 'a', type: 'reps' }, { exId: 'a', type: 'e1rm' }, { exId: 'a', type: 'weight' }, { exId: 'b', type: 'weight' }];
+  assert.deepEqual(S.bestPRsByLift(prs).map((p) => [p.exId, p.type]), [['a', 'e1rm'], ['b', 'weight']]);
+  assert.equal(S.liftsWithPRs([{ prs }, { prs: [] }, {}]), 2);
+});

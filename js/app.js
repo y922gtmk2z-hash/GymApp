@@ -2,6 +2,7 @@
 import * as store from './store.js';
 import { requestPersist } from './db.js';
 import { h, clear, toast } from './ui.js';
+import { fmtDuration } from './util.js';
 import * as today from './views/today.js';
 import * as plan from './views/plan.js';
 import * as progress from './views/progress.js';
@@ -51,8 +52,27 @@ function render({ keepScroll = false } = {}) {
     editWorkout: workout.editWorkout,
   };
   VIEWS[r.name].render(viewEl, ctx);
+  renderResume();
   if (changed && !keepScroll) { window.scrollTo(0, 0); viewEl.focus({ preventScroll: true }); }
   else window.scrollTo(0, y);
+}
+
+const resumeEl = document.getElementById('resume');
+let resumeTimer = null;
+function renderResume() {
+  const w = store.get().activeWorkout;
+  const show = !!w && !workout.isOpen();
+  resumeEl.hidden = !show;
+  document.body.classList.toggle('has-resume', show);
+  clearInterval(resumeTimer);
+  if (!show) return;
+  const time = h('span.num', '');
+  const upd = () => { time.textContent = w.editingId ? 'editing' : fmtDuration((Date.now() - w.startedAt) / 1000); };
+  upd();
+  resumeTimer = setInterval(upd, 1000);
+  clear(resumeEl).append(
+    h('div.grow', h('div', { style: { fontWeight: 700 } }, w.name), h('div.small', 'In progress · ', time)),
+    h('button.btn.small', { type: 'button', onclick: () => workout.openOverlay() }, 'Resume'));
 }
 
 export function applyTheme(theme) {

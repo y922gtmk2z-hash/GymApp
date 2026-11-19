@@ -106,6 +106,20 @@ function renderSettings(root, ctx) {
       field('Daily step cap', numInput({ value: s.stepCap, decimal: false, label: 'Daily step cap',
         onInput: (v) => { const n = parseNum(v); if (n && n >= 2000) ctx.commit((st) => { st.settings.stepCap = Math.round(n); if (st.weightGoal) st.weightGoal.stepCap = Math.round(n); }, { silent: true }); } }), 'Weight-loss step targets never go above this.'),
       h('div.hr'),
+      h('label.check', h('input', { type: 'checkbox', checked: !!s.logEffort, onchange: (e) => ctx.commit((st) => { st.settings.logEffort = e.target.checked; }, { silent: true }) }),
+        h('span', 'Log effort ', h('span.small.muted', '(reps in reserve per set: fine-tunes weight jumps)'))),
+      h('label.check', h('input', { type: 'checkbox', checked: s.autoWarmups !== false, onchange: (e) => ctx.commit((st) => { st.settings.autoWarmups = e.target.checked; }, { silent: true }) }),
+        h('span', 'Add warm-up sets ', h('span.small.muted', '(to the first big lift of a planned session)'))),
+      field('Barbell weight (kg)', numInput({ value: s.barKg ?? 20, label: 'Barbell weight in kilograms',
+        onInput: (v) => { const n = parseNum(v); if (n !== null && n >= 0) ctx.commit((st) => { st.settings.barKg = n; }, { silent: true }); } }), 'In lb mode a 45 lb bar and standard lb plates are used.'),
+      h('div.field', h('label', 'Plates you have (kg)'), h('div.row', [25, 20, 15, 10, 5, 2.5, 2, 1.25, 1, 0.5].map((p) => {
+        const b = h('button.chip', { type: 'button', 'aria-pressed': String(s.plates.includes(p)), onclick: () => {
+          ctx.commit((st) => { const pl = st.settings.plates; st.settings.plates = pl.includes(p) ? pl.filter((x) => x !== p) : [...pl, p].sort((x, y) => y - x); }, { silent: true });
+          b.setAttribute('aria-pressed', String(store.get().settings.plates.includes(p)));
+        } }, String(p));
+        return b;
+      }))),
+      h('div.hr'),
       field('Calendar alert (minutes before)', numInput({ value: s.alarmMinutes, decimal: false,
         onInput: (v) => { const n = parseNum(v); if (n !== null && n >= 0) ctx.commit((st) => { st.settings.alarmMinutes = Math.round(n); }, { silent: true }); } })),
     ),
@@ -212,6 +226,13 @@ function editProfile(ctx, id) {
       field('Name', h('input', { type: 'text', value: p.name, oninput: (e) => update((x) => { x.name = e.target.value || 'Profile'; }) })),
       h('div.section-title', 'Strength'), chips(STRENGTH_EQUIPMENT),
       h('div.section-title', 'Cardio'), chips(CARDIO_EQUIPMENT),
+      h('div.section-title', 'Available weights'),
+      h('p.tiny.muted', 'Leave blank if you have a full rack. Progression stops at the heaviest weight and adds reps instead.'),
+      h('div.grid2',
+        field('Heaviest dumbbell (kg)', numInput({ value: p.weights?.dumbbellMaxKg ?? '', label: 'Heaviest dumbbell in kilograms',
+          onInput: (v) => update((x) => { x.weights = { ...(x.weights || {}), dumbbellMaxKg: parseNum(v) }; }) })),
+        field('Heaviest kettlebell (kg)', numInput({ value: p.weights?.kettlebellMaxKg ?? '', label: 'Heaviest kettlebell in kilograms',
+          onInput: (v) => update((x) => { x.weights = { ...(x.weights || {}), kettlebellMaxKg: parseNum(v) }; }) }))),
       p.builtin ? h('p.tiny.muted', 'Built-in profiles can be edited but not deleted.') :
         h('button.btn.danger', { type: 'button', onclick: async () => {
           if (profileInUse(store.get(), id)) { toast('This profile is used by your plan. Change those days first.'); return; }

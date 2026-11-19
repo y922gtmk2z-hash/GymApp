@@ -620,7 +620,7 @@ export function isStalled(history, repMin) {
  * Suggest the next weight and reps for an exercise.
  * planned: {sets, repMin, repMax}. Returns null with no history, else {kg, reps[], reason}.
  */
-export function suggestNext(ex, history, planned, units = 'kg', { deload = false } = {}) {
+export function suggestNext(ex, history, planned, units = 'kg', { deload = false, maxKg = null } = {}) {
   if (!history?.length) return null;
   const last = history[0].sets;
   const kind = loadKind(ex);
@@ -635,10 +635,20 @@ export function suggestNext(ex, history, planned, units = 'kg', { deload = false
   if (isStalled(history, repMin)) return { kg: roundDownToIncrement(kg * 0.9, kind, units), reps: repsArr(() => repMin), reason: 'stall' };
   const allTop = top.length === last.length ? last.every((s) => s.reps >= repMax) : top.every((s) => s.reps >= repMax);
   const allMin = top.every((s) => s.reps >= repMin);
+  // Effort (reps in reserve), when logged: a set taken to failure holds the weight; every set
+  // with 3+ in reserve earns a double step.
+  const rirs = top.map((s) => s.rir).filter((r) => Number.isFinite(r));
+  const logged = rirs.length === top.length && rirs.length > 0;
   if (allTop) {
-    const next = addIncrement(kg, kind, units);
+    if (logged && Math.min(...rirs) <= 0) return { kg, reps: repsArr((r) => Math.min(r, repMax)), reason: 'top_hard' };
+    let next = addIncrement(kg, kind, units);
+    if (logged && Math.min(...rirs) >= 3) next = addIncrement(next, kind, units);
+    if (maxKg && next > maxKg + 1e-9) {
+      if (kg >= maxKg - 1e-9) return { kg, reps: repsArr((r) => r + 1), reason: 'max_weight' };
+      next = maxKg;
+    }
     if (next === kg) return { kg, reps: repsArr((r) => r + 1), reason: 'reps_only' };
-    return { kg: next, reps: repsArr(() => repMin), reason: 'increase' };
+    return { kg: next, reps: repsArr(() => repMin), reason: logged && Math.min(...rirs) >= 3 ? 'increase_easy' : 'increase' };
   }
   if (allMin) return { kg, reps: repsArr((r) => Math.min(repMax, r + 1)), reason: 'reps' };
   return { kg, reps: repsArr((r) => r), reason: 'repeat' };
@@ -651,6 +661,9 @@ export const REASON_TEXT = {
   stall: 'Stalled twice: drop 10% and build back up',
   deload: 'Deload week: lighter weight',
   reps_only: 'Top of range: add reps, load or a harder variation',
+  top_hard: 'Top of range but at your limit: repeat once more',
+  increase_easy: 'Felt easy: a bigger jump this time',
+  max_weight: 'Heaviest weight you have: add reps instead',
 };
 
 /** Exercises stalled with their latest session within the last 14 days. */
